@@ -31,7 +31,14 @@ export type JournalLineInput = {
 /** يولّد رقم قيد متسلسل مثل JV-2026-0007 ضمن نفس المعاملة. */
 export async function nextDocumentNumber(
   client: TxClient,
-  model: "journalEntry" | "invoice" | "payment" | "purchaseOrder" | "salesOrder" | "payslip",
+  model:
+    | "journalEntry"
+    | "invoice"
+    | "payment"
+    | "purchaseOrder"
+    | "salesOrder"
+    | "payslip"
+    | "returnNote",
   prefix: string,
 ): Promise<string> {
   const year = new Date().getFullYear();
@@ -66,6 +73,7 @@ export async function postJournalEntry(
     purchaseOrderId?: string;
     salesOrderId?: string;
     paymentId?: string;
+    returnNoteId?: string;
   },
 ) {
   const lines = input.lines.filter(
@@ -111,6 +119,7 @@ export async function postJournalEntry(
       purchaseOrderId: input.purchaseOrderId ?? null,
       salesOrderId: input.salesOrderId ?? null,
       paymentId: input.paymentId ?? null,
+      returnNoteId: input.returnNoteId ?? null,
       lines: {
         create: lines.map((line) => ({
           accountId: accountByCode.get(line.accountCode)!,
@@ -207,6 +216,62 @@ export async function postPayment(
     paymentId: input.paymentId,
     createdById: input.createdById,
     lines,
+  });
+}
+
+/**
+ * قيد مرتجع مبيعات: عكس أثر فاتورة البيع — مدين الإيرادات والضريبة،
+ * دائن ذمم العميل (تنخفض مديونيته بقيمة المرتجع).
+ */
+export async function postSalesReturn(
+  client: TxClient,
+  input: {
+    returnNoteId: string;
+    number: string;
+    subtotal: number;
+    taxAmount: number;
+    total: number;
+    createdById?: string;
+  },
+) {
+  return postJournalEntry(client, {
+    description: `مرتجع مبيعات ${input.number}`,
+    sourceType: JournalSourceType.SALES_RETURN,
+    returnNoteId: input.returnNoteId,
+    createdById: input.createdById,
+    lines: [
+      { accountCode: ACCOUNT_CODES.SALES_REVENUE, debit: input.subtotal, description: "تخفيض إيرادات" },
+      { accountCode: ACCOUNT_CODES.VAT_PAYABLE, debit: input.taxAmount, description: "تخفيض ضريبة مستحقة" },
+      { accountCode: ACCOUNT_CODES.RECEIVABLES, credit: input.total, description: "تخفيض ذمم العميل" },
+    ],
+  });
+}
+
+/**
+ * قيد مرتجع مشتريات: عكس أثر الاستلام — مدين ذمم المورد،
+ * دائن المخزون وضريبة المدخلات.
+ */
+export async function postPurchaseReturn(
+  client: TxClient,
+  input: {
+    returnNoteId: string;
+    number: string;
+    subtotal: number;
+    taxAmount: number;
+    total: number;
+    createdById?: string;
+  },
+) {
+  return postJournalEntry(client, {
+    description: `مرتجع مشتريات ${input.number}`,
+    sourceType: JournalSourceType.PURCHASE_RETURN,
+    returnNoteId: input.returnNoteId,
+    createdById: input.createdById,
+    lines: [
+      { accountCode: ACCOUNT_CODES.PAYABLES, debit: input.total, description: "تخفيض ذمم المورد" },
+      { accountCode: ACCOUNT_CODES.INVENTORY, credit: input.subtotal, description: "إخراج مخزون" },
+      { accountCode: ACCOUNT_CODES.VAT_PAYABLE, credit: input.taxAmount, description: "تخفيض ضريبة مدخلات" },
+    ],
   });
 }
 

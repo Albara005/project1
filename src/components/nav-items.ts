@@ -25,6 +25,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/dashboard/stock", label: "أرصدة وحركات المخزون", module: "inventory" },
       { href: "/dashboard/suppliers", label: "الموردون", module: "purchasing" },
       { href: "/dashboard/purchase-orders", label: "أوامر الشراء", module: "purchasing" },
+      { href: "/dashboard/returns?type=PURCHASE", label: "مرتجعات المشتريات", module: "purchasing" },
     ],
   },
   {
@@ -35,6 +36,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/dashboard/sales-orders", label: "أوامر البيع", module: "sales" },
       { href: "/dashboard/invoices", label: "الفواتير", module: "sales" },
       { href: "/dashboard/payments", label: "المدفوعات", module: "sales" },
+      { href: "/dashboard/returns?type=SALES", label: "مرتجعات المبيعات", module: "sales" },
     ],
   },
   {

@@ -5,6 +5,7 @@ import { requireModule } from "@/lib/session";
 import { formatCurrency, formatDate, formatNumber, toNumber } from "@/lib/utils";
 import {
   Badge,
+  Button,
   Card,
   CardContent,
   CardHeader,
@@ -62,9 +63,21 @@ export default async function InvoiceDetailPage({
         title={`${INVOICE_TYPE_LABELS[invoice.type]} ${invoice.number}`}
         description={party ? party.name : "بدون طرف مرتبط"}
         action={
-          <Badge tone={INVOICE_STATUS_TONES[invoice.status]}>
-            {INVOICE_STATUS_LABELS[invoice.status]}
-          </Badge>
+          <div className="flex items-center gap-3">
+            <Badge tone={INVOICE_STATUS_TONES[invoice.status]}>
+              {INVOICE_STATUS_LABELS[invoice.status]}
+            </Badge>
+            <Link href={`/dashboard/invoices/${invoice.id}/print`} target="_blank">
+              <Button size="sm" variant="outline">
+                طباعة
+              </Button>
+            </Link>
+            <Link href={`/dashboard/returns/new?type=${invoice.type}&invoice=${invoice.id}`}>
+              <Button size="sm" variant="outline">
+                تسجيل مرتجع
+              </Button>
+            </Link>
+          </div>
         }
       />
 

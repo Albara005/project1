@@ -222,6 +222,7 @@ model Product {
   purchaseOrderItems PurchaseOrderItem[]
   salesOrderItems    SalesOrderItem[]
   invoiceItems       InvoiceItem[]
+  returnItems        ReturnNoteItem[]
 
   @@index([categoryId])
 }
@@ -239,6 +240,7 @@ model Warehouse {
   stockMovements StockMovement[]
   purchaseOrders PurchaseOrder[]
   salesOrders    SalesOrder[]
+  returns        ReturnNote[]
 }
 
 // الرصيد الحالي لكل منتج في كل مستودع
@@ -302,6 +304,7 @@ model Supplier {
 
   purchaseOrders PurchaseOrder[]
   bills          Invoice[]
+  returns        ReturnNote[]
 }
 
 enum PurchaseOrderStatus {
@@ -372,6 +375,7 @@ model Customer {
   salesOrders SalesOrder[]
   invoices    Invoice[]
   leads       Lead[]
+  returns     ReturnNote[]
 }
 
 enum LeadStatus {
@@ -487,6 +491,7 @@ model Invoice {
   items        InvoiceItem[]
   payments     Payment[]
   journalEntries JournalEntry[]
+  returns      ReturnNote[]
 
   @@index([customerId])
   @@index([supplierId])
@@ -506,6 +511,65 @@ model InvoiceItem {
   lineTotal  Decimal  @db.Decimal(18, 2)
 
   @@index([invoiceId])
+}
+
+// ---------------------------------------------------------------------------
+// Returns - المرتجعات (مبيعات ومشتريات)
+// ---------------------------------------------------------------------------
+
+enum ReturnType {
+  SALES
+  PURCHASE
+}
+
+enum ReturnStatus {
+  DRAFT
+  CONFIRMED
+  CANCELLED
+}
+
+model ReturnNote {
+  id          String   @id @default(cuid())
+  number      String   @unique
+  type        ReturnType
+  status      ReturnStatus @default(DRAFT)
+  customerId  String?
+  customer    Customer? @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  supplierId  String?
+  supplier    Supplier? @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  invoiceId   String?
+  invoice     Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  warehouseId String
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  returnDate  DateTime @default(now())
+  confirmedAt DateTime?
+  reason      String?
+  subtotal    Decimal  @db.Decimal(18, 2) @default(0)
+  taxAmount   Decimal  @db.Decimal(18, 2) @default(0)
+  total       Decimal  @db.Decimal(18, 2) @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items          ReturnNoteItem[]
+  journalEntries JournalEntry[]
+
+  @@index([type])
+  @@index([status])
+  @@index([invoiceId])
+}
+
+model ReturnNoteItem {
+  id           String   @id @default(cuid())
+  returnNoteId String
+  returnNote   ReturnNote @relation(fields: [returnNoteId], references: [id], onDelete: Cascade)
+  productId    String
+  product      Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+  quantity     Decimal  @db.Decimal(18, 3)
+  unitPrice    Decimal  @db.Decimal(18, 2)
+  taxRate      Decimal  @db.Decimal(5, 2) @default(15)
+  lineTotal    Decimal  @db.Decimal(18, 2)
+
+  @@index([returnNoteId])
 }
 
 enum PaymentMethod {
@@ -581,6 +645,8 @@ enum JournalSourceType {
   PURCHASE_ORDER
   PAYMENT
   PAYROLL
+  SALES_RETURN
+  PURCHASE_RETURN
 }
 
 model JournalEntry {
@@ -600,6 +666,8 @@ model JournalEntry {
   salesOrder   SalesOrder? @relation(fields: [salesOrderId], references: [id], onDelete: SetNull)
   paymentId   String?
   payment     Payment? @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  returnNoteId String?
+  returnNote   ReturnNote? @relation(fields: [returnNoteId], references: [id], onDelete: SetNull)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
