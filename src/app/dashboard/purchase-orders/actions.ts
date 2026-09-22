@@ -13,17 +13,29 @@ import { requireUserAction } from "@/lib/session";
 import { toNumber } from "@/lib/utils";
 import { StockError, applyStockMovement } from "@/lib/modules/stock";
 import {
+  CurrencyError,
+  getBaseCurrency,
+  getExchangeRate,
+  toBaseAmount,
+} from "@/lib/modules/currency";
+import {
   PostingError,
   nextDocumentNumber,
   postPurchaseReceipt,
 } from "@/lib/modules/accounting-posting";
 import { WorkflowError, applyTransition, startWorkflow } from "@/lib/workflow";
+import {
+  getBranchScope,
+  resolveDocumentBranchId,
+} from "@/app/dashboard/warehouses/branch-scope";
 
 export type ActionState = { error?: string; success?: boolean };
 
 const headerSchema = z.object({
   supplierId: z.string().trim().min(1, "يجب اختيار المورد"),
   warehouseId: z.string().trim().min(1, "يجب اختيار المستودع"),
+  currencyId: z.string().trim().optional(),
+  branchId: z.string().trim().optional(),
   expectedDate: z.string().trim().optional(),
   note: z.string().trim().optional(),
   items: z.string().trim().min(1, "أضف بنداً واحداً على الأقل"),
@@ -53,6 +65,9 @@ function round2(value: number) {
  * ينشئ أمر شراء بحالة "مسودة" ويبدأ سير العمل المرتبط به.
  * المجاميع (الإجمالي قبل الضريبة، الضريبة، الإجمالي) تُحسب في الخادم من البنود
  * المُرسلة ولا يُعتمد أبداً على أي مجاميع قادمة من المتصفح.
+ *
+ * يُثبَّت على المستند سعر صرف عملته وقت الإنشاء، وتُحفظ معه المجاميع بعملة
+ * الأساس (base*) لأن الدفاتر والتقارير وحدود الاعتماد كلها بعملة الأساس.
  */
 export async function createPurchaseOrder(
   _prev: ActionState,
@@ -113,6 +128,27 @@ export async function createPurchaseOrder(
     return { error: "أحد المنتجات المختارة غير موجود" };
   }
 
+  // العملة وسعر الصرف: يُثبَّت السعر الساري اليوم على المستند ولا يتغيّر بعدها
+  const orderDate = new Date();
+  let currencyId: string;
+  let exchangeRate: number;
+  try {
+    currencyId = parsed.data.currencyId || (await getBaseCurrency()).id;
+    exchangeRate = await getExchangeRate(currencyId, orderDate);
+  } catch (error) {
+    if (error instanceof CurrencyError) return { error: error.message };
+    return { error: "تعذر تحديد سعر صرف العملة المختارة" };
+  }
+
+  const baseSubtotal = toBaseAmount(subtotal, exchangeRate);
+  const baseTaxAmount = toBaseAmount(taxAmount, exchangeRate);
+  // الإجمالي بعملة الأساس = مجموع جزأيه المحوَّلين، حتى يبقى القيد متوازناً
+  // (تحويل الإجمالي بمفرده قد يختلف عن مجموع الجزأين بفلس واحد بسبب التقريب)
+  const baseTotal = round2(baseSubtotal + baseTaxAmount);
+
+  const scope = await getBranchScope(user);
+  const branchId = resolveDocumentBranchId(scope, parsed.data.branchId);
+
   let orderId: string;
   try {
     const order = await prisma.$transaction(async (tx) => {
@@ -124,17 +160,25 @@ export async function createPurchaseOrder(
           supplierId: parsed.data.supplierId,
           warehouseId: parsed.data.warehouseId,
           status: PurchaseOrderStatus.DRAFT,
+          branchId,
+          currencyId,
+          exchangeRate,
+          orderDate,
           expectedDate,
           note: parsed.data.note || null,
           subtotal,
           taxAmount,
           total,
+          baseSubtotal,
+          baseTaxAmount,
+          baseTotal,
           items: { create: items },
         },
       });
 
+      // حدود الاعتماد في محرك سير العمل بعملة الأساس، فيُمرَّر الإجمالي المحوَّل
       await startWorkflow(WorkflowEntityType.PURCHASE_ORDER, created.id, {
-        amount: total,
+        amount: baseTotal,
         actorId: user.id,
         client: tx,
       });
@@ -155,9 +199,22 @@ function isPurchaseOrderStatus(key: string): key is PurchaseOrderStatus {
 }
 
 /**
+ * يعيد مبلغ المستند بعملة الأساس: يعتمد العمود المحفوظ (base*)، ويحسبه من
+ * سعر الصرف المثبّت على المستند للمستندات القديمة التي أُنشئت قبل دعم العملات.
+ */
+function baseAmountOf(baseValue: unknown, documentValue: unknown, rate: number) {
+  const stored = toNumber(baseValue);
+  if (stored !== 0) return stored;
+  return toBaseAmount(toNumber(documentValue), rate);
+}
+
+/**
  * ينفّذ انتقال سير عمل على أمر شراء ويطبّق أثره داخل نفس المعاملة:
  * عند الوصول إلى "مستلم" تُدخل الكميات للمخزون ويُرحَّل قيد الاستلام،
  * وفي بقية الحالات تُزامَن حالة المستند مع مفتاح حالة سير العمل.
+ *
+ * القيد وتكلفة الوحدة في حركة المخزون يُرحَّلان بعملة الأساس دائماً:
+ * استيراد بضاعة بـ 10,000 دولار يجب أن يُدخل المخزون بقيمته بالريال.
  */
 export async function runPurchaseOrderTransition(
   orderId: string,
@@ -196,24 +253,32 @@ export async function runPurchaseOrderTransition(
           return;
         }
 
+        const rate = toNumber(order.exchangeRate) || 1;
+
         for (const line of order.items) {
           await applyStockMovement(tx, {
             productId: line.productId,
             warehouseId: order.warehouseId,
             type: StockMovementType.PURCHASE_IN,
             quantity: toNumber(line.quantity),
-            unitCost: toNumber(line.unitPrice),
+            // تقييم المخزون جزء من الدفاتر، فتُسجَّل التكلفة بعملة الأساس
+            unitCost: toBaseAmount(toNumber(line.unitPrice), rate),
             reference: order.number,
           });
         }
 
+        const baseSubtotal = baseAmountOf(order.baseSubtotal, order.subtotal, rate);
+        const baseTaxAmount = baseAmountOf(order.baseTaxAmount, order.taxAmount, rate);
+
         await postPurchaseReceipt(tx, {
           purchaseOrderId: order.id,
           number: order.number,
-          subtotal: toNumber(order.subtotal),
-          taxAmount: toNumber(order.taxAmount),
-          total: toNumber(order.total),
+          subtotal: baseSubtotal,
+          taxAmount: baseTaxAmount,
+          // مجموع الجزأين وليس تحويل الإجمالي، حتى لا يختل توازن القيد بالتقريب
+          total: round2(baseSubtotal + baseTaxAmount),
           createdById: user.id,
+          branchId: order.branchId,
         });
 
         await tx.purchaseOrder.update({

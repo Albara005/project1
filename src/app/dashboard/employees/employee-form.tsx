@@ -8,6 +8,7 @@ import { EMPLOYEE_STATUS_LABELS, EMPLOYEE_STATUS_VALUES } from "./labels";
 
 export type DepartmentOption = { id: string; name: string };
 export type PositionOption = { id: string; title: string; departmentId: string | null };
+export type BranchChoice = { id: string; code: string; name: string };
 
 export type EmployeeFormValues = {
   id: string;
@@ -21,6 +22,7 @@ export type EmployeeFormValues = {
   terminationDate: string;
   departmentId: string;
   positionId: string;
+  branchId: string;
   baseSalary: string;
   allowances: string;
   status: string;
@@ -38,16 +40,26 @@ function SubmitButton({ label }: { label: string }) {
 export function EmployeeForm({
   departments,
   positions,
+  branches,
+  defaultBranchId = "",
+  canChooseBranch = true,
   employee,
 }: {
   departments: DepartmentOption[];
   positions: PositionOption[];
+  branches: BranchChoice[];
+  /** فرع المستخدم الحالي — القيمة الافتراضية عند إضافة موظف جديد. */
+  defaultBranchId?: string;
+  /** المستخدم المقيّد بفرع لا يختار فرعاً؛ يُعرض فرعه فقط. */
+  canChooseBranch?: boolean;
   employee?: EmployeeFormValues;
 }) {
   const [state, formAction] = useActionState<ActionState, FormData>(saveEmployee, {});
   const formRef = useRef<HTMLFormElement>(null);
 
   const isEdit = Boolean(employee?.id);
+  const selectedBranchId = employee?.branchId || defaultBranchId;
+  const lockedBranch = branches.find((branch) => branch.id === selectedBranchId);
 
   useEffect(() => {
     if (state.success && !isEdit) {
@@ -144,6 +156,23 @@ export function EmployeeForm({
               </optgroup>
             ) : null}
           </Select>
+        </div>
+        <div>
+          <Label htmlFor="branchId">الفرع</Label>
+          {canChooseBranch ? (
+            <Select id="branchId" name="branchId" defaultValue={selectedBranchId}>
+              <option value="">— بدون فرع —</option>
+              {branches.map((branch) => (
+                <option key={branch.id} value={branch.id}>
+                  {branch.name}
+                </option>
+              ))}
+            </Select>
+          ) : (
+            <p className="mt-1 rounded-lg bg-muted/40 px-3 py-2 text-sm font-medium">
+              {lockedBranch?.name ?? "بدون فرع"}
+            </p>
+          )}
         </div>
         <div>
           <Label htmlFor="status">الحالة</Label>

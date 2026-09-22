@@ -18,28 +18,50 @@ import {
   TR,
 } from "@/components/ui";
 import {
+  getBranchScope,
+  employeeBranchWhere,
+  NO_BRANCH_LABEL,
+} from "@/app/dashboard/employees/branch-scope";
+import {
   DeleteDepartmentForm,
   DeletePositionForm,
   DepartmentForm,
   PositionForm,
 } from "./department-forms";
 
-export default async function DepartmentsPage() {
-  await requireModule("hr");
+/** مفتاح مجموعة "بدون فرع" داخل جداول التوزيع. */
+const NO_BRANCH_KEY = "__none__";
 
-  const [departments, positions] = await Promise.all([
+export default async function DepartmentsPage() {
+  const user = await requireModule("hr");
+
+  const scope = await getBranchScope(user);
+  // المستخدم المقيّد بفرع يرى أعداد فرعه فقط.
+  const employeeWhere = employeeBranchWhere(scope.restrictToBranchId);
+
+  const [departments, positions, headcounts, positionCounts] = await Promise.all([
     prisma.department.findMany({
       orderBy: { code: "asc" },
       include: {
-        _count: { select: { employees: true, positions: true } },
+        _count: { select: { positions: true } },
       },
     }),
     prisma.position.findMany({
       orderBy: { title: "asc" },
       include: {
         department: { select: { name: true } },
-        _count: { select: { employees: true } },
       },
+    }),
+    // توزيع الموظفين على (القسم × الفرع) في استعلام واحد.
+    prisma.employee.groupBy({
+      by: ["departmentId", "branchId"],
+      where: employeeWhere,
+      _count: { _all: true },
+    }),
+    prisma.employee.groupBy({
+      by: ["positionId"],
+      where: employeeWhere,
+      _count: { _all: true },
     }),
   ]);
 
@@ -48,10 +70,50 @@ export default async function DepartmentsPage() {
     name: department.name,
   }));
 
-  const totalEmployees = departments.reduce(
-    (sum, department) => sum + department._count.employees,
-    0,
+  // الفروع التي يظهر لها عمود: الفروع النشطة الظاهرة للمستخدم فقط.
+  const visibleBranches = scope.restrictToBranchId
+    ? scope.branches.filter((branch) => branch.id === scope.restrictToBranchId)
+    : scope.branches;
+
+  const hasUnassignedBranch = headcounts.some(
+    (row) => row.branchId === null && row._count._all > 0,
   );
+
+  const branchColumns: { key: string; name: string }[] = [
+    ...visibleBranches.map((branch) => ({ key: branch.id, name: branch.name })),
+    ...(hasUnassignedBranch ? [{ key: NO_BRANCH_KEY, name: NO_BRANCH_LABEL }] : []),
+  ];
+
+  // خريطة: القسم ← (الفرع ← العدد)، مع مجموع لكل قسم ولكل فرع.
+  const byDepartment = new Map<string, Map<string, number>>();
+  const branchTotals = new Map<string, number>();
+  const departmentTotals = new Map<string, number>();
+  let totalEmployees = 0;
+
+  for (const row of headcounts) {
+    const departmentKey = row.departmentId ?? NO_BRANCH_KEY;
+    const branchKey = row.branchId ?? NO_BRANCH_KEY;
+    const count = row._count._all;
+
+    let cells = byDepartment.get(departmentKey);
+    if (!cells) {
+      cells = new Map<string, number>();
+      byDepartment.set(departmentKey, cells);
+    }
+    cells.set(branchKey, (cells.get(branchKey) ?? 0) + count);
+
+    branchTotals.set(branchKey, (branchTotals.get(branchKey) ?? 0) + count);
+    departmentTotals.set(departmentKey, (departmentTotals.get(departmentKey) ?? 0) + count);
+    totalEmployees += count;
+  }
+
+  const positionEmployeeCounts = new Map<string, number>(
+    positionCounts
+      .filter((row) => row.positionId !== null)
+      .map((row) => [row.positionId as string, row._count._all]),
+  );
+
+  const unassignedDepartmentTotal = departmentTotals.get(NO_BRANCH_KEY) ?? 0;
 
   return (
     <div>

@@ -11,6 +11,7 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  Select,
   Table,
   TBody,
   TD,
@@ -18,28 +19,36 @@ import {
   THead,
   TR,
 } from "@/components/ui";
+import { getBranchScope, resolveBranchFilter } from "./branch-scope";
 import { EmployeeForm } from "./employee-form";
 import { EMPLOYEE_STATUS_LABELS, EMPLOYEE_STATUS_TONES } from "./labels";
 
 export default async function EmployeesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string }>;
+  searchParams: Promise<{ q?: string; branch?: string }>;
 }) {
-  await requireModule("hr");
+  const user = await requireModule("hr");
 
-  const { q } = await searchParams;
+  const { q, branch } = await searchParams;
   const search = (q ?? "").trim();
 
-  const where: Prisma.EmployeeWhereInput = search
-    ? {
-        OR: [
-          { firstName: { contains: search, mode: "insensitive" } },
-          { lastName: { contains: search, mode: "insensitive" } },
-          { employeeNo: { contains: search, mode: "insensitive" } },
-        ],
-      }
-    : {};
+  const scope = await getBranchScope(user);
+  const branchFilter = resolveBranchFilter(scope, branch);
+  const selectedBranch = scope.canChooseBranch ? branchFilter : null;
+
+  const where: Prisma.EmployeeWhereInput = {
+    ...(branchFilter ? { branchId: branchFilter } : {}),
+    ...(search
+      ? {
+          OR: [
+            { firstName: { contains: search, mode: "insensitive" } },
+            { lastName: { contains: search, mode: "insensitive" } },
+            { employeeNo: { contains: search, mode: "insensitive" } },
+          ],
+        }
+      : {}),
+  };
 
   const [employees, departments, positions] = await Promise.all([
     prisma.employee.findMany({
@@ -48,6 +57,7 @@ export default async function EmployeesPage({
       include: {
         department: { select: { name: true } },
         position: { select: { title: true } },
+        branch: { select: { name: true, code: true } },
       },
     }),
     prisma.department.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } }),
@@ -61,7 +71,13 @@ export default async function EmployeesPage({
     <div>
       <PageHeader
         title="الموظفون"
-        description="بيانات الموظفين والرواتب الأساسية والبدلات"
+        description={
+          scope.restrictToBranchId
+            ? `بيانات الموظفين والرواتب الأساسية والبدلات — فرع ${
+                scope.branches.find((item) => item.id === scope.restrictToBranchId)?.name ?? ""
+              }`
+            : "بيانات الموظفين والرواتب الأساسية والبدلات"
+        }
       />
 
       <Card className="mb-4">
@@ -71,7 +87,13 @@ export default async function EmployeesPage({
               + إضافة موظف جديد
             </summary>
             <div className="mt-4 border-t border-border pt-4">
-              <EmployeeForm departments={departments} positions={positions} />
+              <EmployeeForm
+                departments={departments}
+                positions={positions}
+                branches={scope.branches}
+                defaultBranchId={scope.userBranchId ?? ""}
+                canChooseBranch={scope.canChooseBranch}
+              />
             </div>
           </details>
         </CardContent>
@@ -86,10 +108,22 @@ export default async function EmployeesPage({
             aria-label="بحث عن موظف"
           />
         </div>
+        {scope.canChooseBranch ? (
+          <div className="w-52">
+            <Select name="branch" defaultValue={selectedBranch ?? ""} aria-label="تصفية بالفرع">
+              <option value="">كل الفروع</option>
+              {scope.branches.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+        ) : null}
         <Button type="submit" variant="secondary">
           بحث
         </Button>
-        {search ? (
+        {search || selectedBranch ? (
           <Link href="/dashboard/employees">
             <Button type="button" variant="ghost">
               مسح
@@ -100,10 +134,10 @@ export default async function EmployeesPage({
 
       {employees.length === 0 ? (
         <EmptyState
-          title={search ? "لا توجد نتائج مطابقة" : "لا يوجد موظفون بعد"}
+          title={search || selectedBranch ? "لا توجد نتائج مطابقة" : "لا يوجد موظفون بعد"}
           description={
-            search
-              ? "جرّب البحث باسم آخر أو امسح كلمة البحث."
+            search || selectedBranch
+              ? "جرّب البحث باسم آخر أو غيّر الفرع أو امسح التصفية."
               : "أضف أول موظف من نموذج الإضافة بالأعلى."
           }
         />
@@ -114,6 +148,7 @@ export default async function EmployeesPage({
               <TR>
                 <TH>الرقم الوظيفي</TH>
                 <TH>الاسم</TH>
+                <TH>الفرع</TH>
                 <TH>القسم</TH>
                 <TH>المسمى الوظيفي</TH>
                 <TH>تاريخ التعيين</TH>
@@ -136,6 +171,13 @@ export default async function EmployeesPage({
                     <p className="text-xs text-muted-foreground" dir="ltr">
                       {employee.email ?? employee.phone ?? "—"}
                     </p>
+                  </TD>
+                  <TD>
+                    {employee.branch ? (
+                      <Badge tone="purple">{employee.branch.name}</Badge>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
                   </TD>
                   <TD>{employee.department?.name ?? "—"}</TD>
                   <TD>{employee.position?.title ?? "—"}</TD>

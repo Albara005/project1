@@ -9,20 +9,25 @@ export type AccountMovement = { debit: number; credit: number };
 
 export type DateRange = { from?: Date; to?: Date };
 
+/** نطاق التقرير: فترة زمنية اختيارية مع بُعد الفرع الاختياري. */
+export type MovementFilter = DateRange & { branchId?: string };
+
 /**
  * مجاميع المدين والدائن لكل حساب من سطور القيود **المرحّلة فقط**.
  * تشمل القيود اليدوية والقيود المولّدة تلقائياً من المبيعات والمشتريات والرواتب.
+ * عند تمرير `branchId` تُحتسب قيود ذلك الفرع فقط، وبدونه تُحتسب كل الفروع.
  */
 export async function getAccountMovements(
-  range?: DateRange,
+  filter?: MovementFilter,
 ): Promise<Map<string, AccountMovement>> {
-  const hasRange = Boolean(range?.from || range?.to);
+  const hasRange = Boolean(filter?.from || filter?.to);
   const grouped = await prisma.journalEntryLine.groupBy({
     by: ["accountId"],
     where: {
       journalEntry: {
         status: JournalEntryStatus.POSTED,
-        entryDate: hasRange ? { gte: range?.from, lte: range?.to } : undefined,
+        entryDate: hasRange ? { gte: filter?.from, lte: filter?.to } : undefined,
+        branchId: filter?.branchId,
       },
     },
     _sum: { debit: true, credit: true },

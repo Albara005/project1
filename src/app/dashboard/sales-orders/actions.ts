@@ -19,7 +19,13 @@ import {
   postSalesInvoice,
   PostingError,
 } from "@/lib/modules/accounting-posting";
+import {
+  CurrencyError,
+  getExchangeRate,
+  toBaseAmount,
+} from "@/lib/modules/currency";
 import { applyTransition, startWorkflow, WorkflowError } from "@/lib/workflow";
+import { getBranchScope, resolveBranchId } from "../invoices/document-scope";
 import { salesOrderStatusFromStateKey } from "./status";
 
 export type ActionState = { error?: string; success?: boolean };
@@ -43,6 +49,8 @@ const itemSchema = z.object({
 const orderSchema = z.object({
   customerId: z.string().trim().min(1, "يجب اختيار العميل"),
   warehouseId: z.string().trim().min(1, "يجب اختيار المستودع"),
+  currencyId: z.string().trim().min(1, "يجب اختيار العملة"),
+  branchId: optionalText,
   deliveryDate: optionalText,
   note: optionalText,
   items: z.string().min(1, "أضف صنفاً واحداً على الأقل"),
@@ -50,6 +58,16 @@ const orderSchema = z.object({
 
 function round2(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+/**
+ * قيمة المستند بعملة الأساس: العمود المخزَّن إن وُجد، وإلا تُشتق من سعر الصرف
+ * حتى تبقى الأوامر المنشأة قبل إضافة أعمدة الأساس صحيحة الترحيل.
+ */
+function baseOf(stored: unknown, documentAmount: unknown, exchangeRate: unknown): number {
+  const value = toNumber(stored);
+  if (value !== 0) return value;
+  return toBaseAmount(toNumber(documentAmount), toNumber(exchangeRate) || 1);
 }
 
 /**
@@ -102,6 +120,23 @@ export async function createSalesOrder(
   const taxAmount = round2(lines.reduce((sum, line) => sum + line.lineTax, 0));
   const total = round2(subtotal + taxAmount);
 
+  // سعر الصرف يُثبَّت على المستند وقت إنشائه، والقيم بعملة الأساس تُشتق منه
+  const orderDate = new Date();
+  let exchangeRate: number;
+  try {
+    exchangeRate = await getExchangeRate(parsed.data.currencyId, orderDate);
+  } catch (error) {
+    if (error instanceof CurrencyError) return { error: error.message };
+    throw error;
+  }
+
+  const baseSubtotal = toBaseAmount(subtotal, exchangeRate);
+  const baseTaxAmount = toBaseAmount(taxAmount, exchangeRate);
+  const baseTotal = toBaseAmount(total, exchangeRate);
+
+  const scope = await getBranchScope(user);
+  const branchId = resolveBranchId(scope, parsed.data.branchId);
+
   let orderId: string;
 
   try {
@@ -113,8 +148,11 @@ export async function createSalesOrder(
           number,
           customerId: parsed.data.customerId,
           warehouseId: parsed.data.warehouseId,
+          branchId,
+          currencyId: parsed.data.currencyId,
+          exchangeRate,
           status: SalesOrderStatus.DRAFT,
-          orderDate: new Date(),
+          orderDate,
           deliveryDate: parsed.data.deliveryDate
             ? new Date(parsed.data.deliveryDate)
             : null,
@@ -122,6 +160,9 @@ export async function createSalesOrder(
           subtotal,
           taxAmount,
           total,
+          baseSubtotal,
+          baseTaxAmount,
+          baseTotal,
           items: {
             create: lines.map((line) => ({
               productId: line.productId,
@@ -134,8 +175,9 @@ export async function createSalesOrder(
         },
       });
 
+      // مبلغ سير العمل بعملة الأساس حتى تتقارن حدود الاعتماد بين العملات
       await startWorkflow(WorkflowEntityType.SALES_ORDER, created.id, {
-        amount: total,
+        amount: baseTotal,
         actorId: user.id,
         client: tx,
       });
@@ -213,6 +255,19 @@ export async function runSalesOrderTransition(
             const dueDate = new Date();
             dueDate.setDate(dueDate.getDate() + 30);
 
+            const baseSubtotal = baseOf(
+              order.baseSubtotal,
+              order.subtotal,
+              order.exchangeRate,
+            );
+            const baseTaxAmount = baseOf(
+              order.baseTaxAmount,
+              order.taxAmount,
+              order.exchangeRate,
+            );
+            const baseTotal = baseOf(order.baseTotal, order.total, order.exchangeRate);
+
+            // الفاتورة ترث عملة الأمر وسعر صرفه وفرعه، فلا تتغيّر قيمتها بعملة الأساس
             const invoice = await tx.invoice.create({
               data: {
                 number: invoiceNumber,
@@ -220,11 +275,17 @@ export async function runSalesOrderTransition(
                 status: InvoiceStatus.ISSUED,
                 customerId: order.customerId,
                 salesOrderId: order.id,
+                branchId: order.branchId,
+                currencyId: order.currencyId,
+                exchangeRate: order.exchangeRate,
                 issueDate: new Date(),
                 dueDate,
                 subtotal: order.subtotal,
                 taxAmount: order.taxAmount,
                 total: order.total,
+                baseSubtotal,
+                baseTaxAmount,
+                baseTotal,
                 note: `فاتورة عن أمر البيع ${order.number}`,
                 items: {
                   create: order.items.map((item) => ({
@@ -239,13 +300,15 @@ export async function runSalesOrderTransition(
               },
             });
 
+            // القيود تُرحَّل دائماً بعملة الأساس، لا بعملة المستند
             await postSalesInvoice(tx, {
               invoiceId: invoice.id,
               number: invoice.number,
-              subtotal: toNumber(order.subtotal),
-              taxAmount: toNumber(order.taxAmount),
-              total: toNumber(order.total),
+              subtotal: baseSubtotal,
+              taxAmount: baseTaxAmount,
+              total: baseTotal,
               createdById: user.id,
+              branchId: order.branchId,
             });
           }
         }

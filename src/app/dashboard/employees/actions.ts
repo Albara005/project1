@@ -5,6 +5,11 @@ import { z } from "zod";
 import { Prisma } from "@/generated/prisma";
 import { prisma } from "@/lib/db";
 import { requireUserAction } from "@/lib/session";
+import {
+  getBranchScope,
+  resolveBranchForWrite,
+  validateBranchId,
+} from "./branch-scope";
 import { EMPLOYEE_STATUS_VALUES } from "./labels";
 
 export type ActionState = { error?: string; success?: boolean; message?: string };
@@ -55,6 +60,7 @@ const employeeSchema = z.object({
   terminationDate: optionalDate("تاريخ انتهاء الخدمة غير صحيح"),
   departmentId: optionalText,
   positionId: optionalText,
+  branchId: optionalText,
   baseSalary: money("الراتب الأساسي غير صحيح"),
   allowances: money("قيمة البدلات غير صحيحة"),
   status: z.enum(EMPLOYEE_STATUS_VALUES),
@@ -65,7 +71,7 @@ export async function saveEmployee(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  await requireUserAction("hr");
+  const user = await requireUserAction("hr");
 
   const parsed = employeeSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) {
@@ -81,6 +87,26 @@ export async function saveEmployee(
     return { error: "تاريخ انتهاء الخدمة يجب أن يكون بعد تاريخ التعيين" };
   }
 
+  // الفرع: المستخدم المقيّد يُجبَر على فرعه، وفرعه هو الافتراضي عند إضافة موظف جديد.
+  const scope = await getBranchScope(user);
+  const branchId = resolveBranchForWrite(scope, input.branchId, {
+    isCreate: !input.id,
+  });
+  const branchError = validateBranchId(scope, branchId);
+  if (branchError) return { error: branchError };
+
+  // منع المستخدم المقيّد من تعديل موظف خارج فرعه.
+  if (input.id && scope.restrictToBranchId) {
+    const current = await prisma.employee.findUnique({
+      where: { id: input.id },
+      select: { branchId: true },
+    });
+    if (!current) return { error: "الموظف غير موجود" };
+    if (current.branchId !== scope.restrictToBranchId) {
+      return { error: "لا تملك صلاحية على موظفي فرع آخر" };
+    }
+  }
+
   const data = {
     employeeNo: input.employeeNo,
     firstName: input.firstName,
@@ -92,6 +118,7 @@ export async function saveEmployee(
     terminationDate: input.terminationDate,
     departmentId: input.departmentId,
     positionId: input.positionId,
+    branchId,
     baseSalary: new Prisma.Decimal(input.baseSalary),
     allowances: new Prisma.Decimal(input.allowances),
     status: input.status,
@@ -123,10 +150,22 @@ export async function deleteEmployee(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  await requireUserAction("hr");
+  const user = await requireUserAction("hr");
 
   const id = String(formData.get("id") ?? "").trim();
   if (!id) return { error: "الموظف غير محدد" };
+
+  const scope = await getBranchScope(user);
+  if (scope.restrictToBranchId) {
+    const employee = await prisma.employee.findUnique({
+      where: { id },
+      select: { branchId: true },
+    });
+    if (!employee) return { error: "الموظف غير موجود" };
+    if (employee.branchId !== scope.restrictToBranchId) {
+      return { error: "لا تملك صلاحية على موظفي فرع آخر" };
+    }
+  }
 
   const [payslips, leaves] = await Promise.all([
     prisma.payslip.count({ where: { employeeId: id } }),

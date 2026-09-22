@@ -18,6 +18,7 @@ import {
   THead,
   TR,
 } from "@/components/ui";
+import { getBranchScope } from "../branch-scope";
 import { EmployeeForm } from "../employee-form";
 import { DeleteEmployeeForm } from "../delete-employee-form";
 import { EMPLOYEE_STATUS_LABELS, EMPLOYEE_STATUS_TONES } from "../labels";
@@ -42,8 +43,10 @@ export default async function EmployeeDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await requireModule("hr");
+  const user = await requireModule("hr");
   const { id } = await params;
+
+  const scope = await getBranchScope(user);
 
   const [employee, departments, positions] = await Promise.all([
     prisma.employee.findUnique({
@@ -51,6 +54,7 @@ export default async function EmployeeDetailPage({
       include: {
         department: { select: { name: true, code: true } },
         position: { select: { title: true } },
+        branch: { select: { name: true, code: true } },
         leaveRequests: { orderBy: { startDate: "desc" } },
         payslips: { orderBy: [{ periodYear: "desc" }, { periodMonth: "desc" }] },
       },
@@ -64,6 +68,11 @@ export default async function EmployeeDetailPage({
 
   if (!employee) notFound();
 
+  // المستخدم المقيّد بفرع لا يطّلع على ملفات موظفي الفروع الأخرى.
+  if (scope.restrictToBranchId && employee.branchId !== scope.restrictToBranchId) {
+    notFound();
+  }
+
   const totalSalary = toNumber(employee.baseSalary) + toNumber(employee.allowances);
 
   const profileRows: { label: string; value: string; ltr?: boolean }[] = [
@@ -71,6 +80,7 @@ export default async function EmployeeDetailPage({
     { label: "البريد الإلكتروني", value: employee.email ?? "—", ltr: true },
     { label: "رقم الجوال", value: employee.phone ?? "—", ltr: true },
     { label: "رقم الهوية", value: employee.nationalId ?? "—", ltr: true },
+    { label: "الفرع", value: employee.branch?.name ?? "—" },
     { label: "القسم", value: employee.department?.name ?? "—" },
     { label: "المسمى الوظيفي", value: employee.position?.title ?? "—" },
     { label: "تاريخ التعيين", value: formatDate(employee.hireDate) },
@@ -87,6 +97,9 @@ export default async function EmployeeDetailPage({
         description={`ملف الموظف — ${employee.employeeNo}`}
         action={
           <div className="flex items-center gap-2">
+            {employee.branch ? (
+              <Badge tone="purple">{employee.branch.name}</Badge>
+            ) : null}
             <Badge tone={EMPLOYEE_STATUS_TONES[employee.status]}>
               {EMPLOYEE_STATUS_LABELS[employee.status]}
             </Badge>
@@ -149,6 +162,9 @@ export default async function EmployeeDetailPage({
           <EmployeeForm
             departments={departments}
             positions={positions}
+            branches={scope.branches}
+            defaultBranchId={scope.userBranchId ?? ""}
+            canChooseBranch={scope.canChooseBranch}
             employee={{
               id: employee.id,
               employeeNo: employee.employeeNo,
@@ -161,6 +177,7 @@ export default async function EmployeeDetailPage({
               terminationDate: toDateInput(employee.terminationDate),
               departmentId: employee.departmentId ?? "",
               positionId: employee.positionId ?? "",
+              branchId: employee.branchId ?? "",
               baseSalary: String(toNumber(employee.baseSalary)),
               allowances: String(toNumber(employee.allowances)),
               status: employee.status,

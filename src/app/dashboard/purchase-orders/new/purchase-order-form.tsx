@@ -18,6 +18,15 @@ import { createPurchaseOrder, type ActionState } from "../actions";
 
 export type SupplierOption = { id: string; code: string; name: string };
 export type WarehouseOption = { id: string; code: string; name: string };
+export type BranchOption = { id: string; code: string; name: string };
+/** `rate` = كم وحدة من عملة الأساس تساوي وحدة واحدة من هذه العملة (null = لا سعر سارٍ). */
+export type CurrencyOption = {
+  id: string;
+  code: string;
+  name: string;
+  isBase: boolean;
+  rate: number | null;
+};
 export type ProductOption = {
   id: string;
   sku: string;
@@ -60,6 +69,21 @@ function money(value: number) {
   });
 }
 
+/** تنسيق مبلغ بعملة محددة؛ يسقط إلى رقم مجرد إن لم يكن رمز العملة معروفاً. */
+function moneyIn(value: number, code: string) {
+  if (!code) return money(value);
+  try {
+    return new Intl.NumberFormat("ar-SA-u-nu-latn", {
+      style: "currency",
+      currency: code,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(value);
+  } catch {
+    return `${money(value)} ${code}`;
+  }
+}
+
 function SubmitButton({ disabled }: { disabled: boolean }) {
   const { pending } = useFormStatus();
   return (
@@ -77,16 +101,29 @@ export function PurchaseOrderForm({
   suppliers,
   warehouses,
   products,
+  currencies,
+  branches,
+  defaultCurrencyId,
+  defaultBranchId,
+  baseCurrencyCode,
+  canChooseBranch,
 }: {
   suppliers: SupplierOption[];
   warehouses: WarehouseOption[];
   products: ProductOption[];
+  currencies: CurrencyOption[];
+  branches: BranchOption[];
+  defaultCurrencyId: string;
+  defaultBranchId: string;
+  baseCurrencyCode: string;
+  canChooseBranch: boolean;
 }) {
   const [state, formAction] = useActionState<ActionState, FormData>(
     createPurchaseOrder,
     {},
   );
   const [lines, setLines] = useState<Line[]>(() => [emptyLine()]);
+  const [currencyId, setCurrencyId] = useState(defaultCurrencyId);
 
   function updateLine(key: string, patch: Partial<Line>) {
     setLines((current) =>
@@ -121,14 +158,26 @@ export function PurchaseOrderForm({
     })),
   );
 
-  const missingData = suppliers.length === 0 || warehouses.length === 0 || products.length === 0;
+  const selectedCurrency =
+    currencies.find((currency) => currency.id === currencyId) ?? currencies[0];
+  const currencyCode = selectedCurrency?.code ?? baseCurrencyCode;
+  const showBaseEquivalent =
+    Boolean(selectedCurrency) && !selectedCurrency!.isBase && Boolean(baseCurrencyCode);
+  const rate = selectedCurrency?.rate ?? null;
+
+  const missingData =
+    suppliers.length === 0 ||
+    warehouses.length === 0 ||
+    products.length === 0 ||
+    currencies.length === 0;
 
   if (missingData) {
     return (
       <Card>
         <CardContent className="pt-5">
           <p className="text-sm text-muted-foreground">
-            يلزم وجود مورد نشط ومستودع نشط ومنتج نشط واحد على الأقل قبل إنشاء أمر شراء.
+            يلزم وجود مورد نشط ومستودع نشط ومنتج نشط وعملة واحدة على الأقل قبل إنشاء أمر
+            شراء.
           </p>
         </CardContent>
       </Card>
