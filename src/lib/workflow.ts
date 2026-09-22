@@ -243,13 +243,7 @@ export async function getWorkflowHistory(
   return instance?.history ?? [];
 }
 
-export const ENTITY_TYPE_LABELS: Record<WorkflowEntityType, string> = {
-  PURCHASE_ORDER: "أمر شراء",
-  SALES_ORDER: "أمر بيع",
-  INVOICE: "فاتورة",
-  LEAVE_REQUEST: "طلب إجازة",
-  JOURNAL_ENTRY: "قيد محاسبي",
-};
+export { ENTITY_TYPE_LABELS } from "@/lib/labels";
 
 export const STATE_COLORS: Record<string, string> = {
   gray: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
