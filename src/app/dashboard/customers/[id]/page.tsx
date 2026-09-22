@@ -31,39 +31,45 @@ export default async function CustomerDetailPage({
   await requireModule("sales");
   const { id } = await params;
 
-  const customer = await prisma.customer.findUnique({
-    where: { id },
-    include: {
-      invoices: {
-        where: { type: InvoiceType.SALES },
-        orderBy: { issueDate: "desc" },
-        take: 10,
-        select: {
-          id: true,
-          number: true,
-          status: true,
-          issueDate: true,
-          total: true,
-          paidAmount: true,
+  const [customer, balance] = await Promise.all([
+    prisma.customer.findUnique({
+      where: { id },
+      include: {
+        invoices: {
+          where: { type: InvoiceType.SALES },
+          orderBy: { issueDate: "desc" },
+          take: 10,
+          select: {
+            id: true,
+            number: true,
+            status: true,
+            issueDate: true,
+            total: true,
+            paidAmount: true,
+          },
+        },
+        salesOrders: {
+          orderBy: { orderDate: "desc" },
+          take: 10,
+          select: { id: true, number: true, status: true, orderDate: true, total: true },
         },
       },
-      salesOrders: {
-        orderBy: { orderDate: "desc" },
-        take: 10,
-        select: { id: true, number: true, status: true, orderDate: true, total: true },
+    }),
+    // الرصيد المستحق يُحسب على كل فواتير المبيعات غير الملغاة، لا على المعروض فقط
+    prisma.invoice.aggregate({
+      where: {
+        customerId: id,
+        type: InvoiceType.SALES,
+        status: { not: InvoiceStatus.CANCELLED },
       },
-    },
-  });
+      _sum: { total: true, paidAmount: true },
+    }),
+  ]);
 
   if (!customer) notFound();
 
-  const outstanding = customer.invoices.reduce(
-    (sum, invoice) =>
-      invoice.status === InvoiceStatus.CANCELLED
-        ? sum
-        : sum + toNumber(invoice.total) - toNumber(invoice.paidAmount),
-    0,
-  );
+  const outstanding =
+    toNumber(balance._sum.total) - toNumber(balance._sum.paidAmount);
 
   return (
     <div className="mx-auto max-w-5xl">
