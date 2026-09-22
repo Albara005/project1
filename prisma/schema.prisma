@@ -142,6 +142,7 @@ model WorkflowTransition {
   label          String
   allowedRoles   Role[]
   minAmount      Decimal? @db.Decimal(18, 2)
+  maxAmount      Decimal? @db.Decimal(18, 2)
   requiresNote   Boolean  @default(false)
   sortOrder      Int      @default(0)
 

@@ -176,6 +176,7 @@ const transitionSchema = z
     label: z.string().min(1, "اسم الإجراء مطلوب"),
     allowedRoles: z.array(z.enum(Role)).default([]),
     minAmount: z.string().optional(),
+    maxAmount: z.string().optional(),
     requiresNote: z.coerce.boolean().optional(),
   })
   .refine((data) => data.fromStateId !== data.toStateId, {
@@ -195,6 +196,7 @@ export async function createTransition(
     label: formData.get("label"),
     allowedRoles: formData.getAll("allowedRoles"),
     minAmount: formData.get("minAmount"),
+    maxAmount: formData.get("maxAmount"),
     requiresNote: formData.get("requiresNote") === "on",
   });
 
@@ -202,12 +204,16 @@ export async function createTransition(
     return { error: parsed.error.issues[0]?.message ?? "بيانات غير صحيحة" };
   }
 
-  const { definitionId, minAmount, ...transition } = parsed.data;
+  const { definitionId, minAmount, maxAmount, ...transition } = parsed.data;
   const count = await prisma.workflowTransition.count({ where: { definitionId } });
-  const amount = minAmount?.trim() ? Number(minAmount) : null;
+  const min = minAmount?.trim() ? Number(minAmount) : null;
+  const max = maxAmount?.trim() ? Number(maxAmount) : null;
 
-  if (amount !== null && !Number.isFinite(amount)) {
-    return { error: "الحد الأدنى للمبلغ يجب أن يكون رقماً" };
+  if ((min !== null && !Number.isFinite(min)) || (max !== null && !Number.isFinite(max))) {
+    return { error: "حدود المبلغ يجب أن تكون أرقاماً" };
+  }
+  if (min !== null && max !== null && min > max) {
+    return { error: "الحد الأدنى للمبلغ أكبر من الحد الأعلى" };
   }
 
   await prisma.workflowTransition.create({
@@ -215,7 +221,8 @@ export async function createTransition(
       ...transition,
       definitionId,
       requiresNote: transition.requiresNote ?? false,
-      minAmount: amount,
+      minAmount: min,
+      maxAmount: max,
       sortOrder: count,
     },
   });

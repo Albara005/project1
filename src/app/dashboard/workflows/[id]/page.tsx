@@ -150,6 +150,9 @@ export default async function WorkflowDefinitionPage({
                           transition.minAmount
                             ? `≥ ${formatCurrency(Number(transition.minAmount))}`
                             : null,
+                          transition.maxAmount
+                            ? `≤ ${formatCurrency(Number(transition.maxAmount))}`
+                            : null,
                           transition.requiresNote ? "ملاحظة مطلوبة" : null,
                         ]
                           .filter(Boolean)

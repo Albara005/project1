@@ -283,8 +283,8 @@ async function main() {
     ],
     transitions: [
       { from: "DRAFT", to: "PENDING_APPROVAL", label: "إرسال للاعتماد", roles: [Role.SALES] },
-      // الطلبات التي تتجاوز 20,000 تحتاج اعتماد المدير فقط
-      { from: "PENDING_APPROVAL", to: "CONFIRMED", label: "تأكيد الطلب", roles: [Role.SALES] },
+      // الطلبات حتى 20,000 يؤكدها مندوب المبيعات، وما فوقها للمدير وحده
+      { from: "PENDING_APPROVAL", to: "CONFIRMED", label: "تأكيد الطلب", roles: [Role.SALES], maxAmount: 20000 },
       { from: "PENDING_APPROVAL", to: "CONFIRMED", label: "تأكيد طلب كبير (مدير)", roles: [Role.ADMIN], minAmount: 20000 },
       { from: "PENDING_APPROVAL", to: "DRAFT", label: "إرجاع للمسودة", roles: [Role.ADMIN, Role.SALES], requiresNote: true },
       { from: "CONFIRMED", to: "INVOICED", label: "إصدار فاتورة", roles: [Role.SALES, Role.ACCOUNTANT] },
@@ -328,6 +328,7 @@ type SeedTransition = {
   label: string;
   roles: Role[];
   minAmount?: number;
+  maxAmount?: number;
   requiresNote?: boolean;
 };
 
@@ -377,6 +378,7 @@ async function seedWorkflow(input: {
         label: transition.label,
         allowedRoles: transition.roles,
         minAmount: transition.minAmount ?? null,
+        maxAmount: transition.maxAmount ?? null,
         requiresNote: transition.requiresNote ?? false,
         sortOrder: index,
       },

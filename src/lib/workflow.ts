@@ -128,7 +128,11 @@ export async function getWorkflowSnapshot(
 }
 
 function isTransitionAllowed(
-  transition: { allowedRoles: Role[]; minAmount: Prisma.Decimal | null },
+  transition: {
+    allowedRoles: Role[];
+    minAmount: Prisma.Decimal | null;
+    maxAmount: Prisma.Decimal | null;
+  },
   role: Role,
   amount: number,
 ): boolean {
@@ -136,6 +140,9 @@ function isTransitionAllowed(
     if (!transition.allowedRoles.includes(role)) return false;
   }
   if (transition.minAmount && amount < Number(transition.minAmount)) return false;
+  // الحد الأعلى يُطبَّق على الجميع بمن فيهم المدير، وإلا ظهر للمدير زران
+  // متطابقان لنفس الانتقال عند تجاوز الحد.
+  if (transition.maxAmount && amount > Number(transition.maxAmount)) return false;
   return true;
 }
 

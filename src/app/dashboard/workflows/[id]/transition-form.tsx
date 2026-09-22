@@ -94,18 +94,35 @@ export function TransitionForm({
               ))}
             </div>
           </div>
-          <div>
-            <Label htmlFor="minAmount">حد أدنى لقيمة المستند (اختياري)</Label>
-            <Input
-              id="minAmount"
-              name="minAmount"
-              type="number"
-              step="0.01"
-              min="0"
-              dir="ltr"
-              placeholder="20000"
-            />
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <Label htmlFor="minAmount">حد أدنى للقيمة</Label>
+              <Input
+                id="minAmount"
+                name="minAmount"
+                type="number"
+                step="0.01"
+                min="0"
+                dir="ltr"
+                placeholder="20000"
+              />
+            </div>
+            <div>
+              <Label htmlFor="maxAmount">حد أعلى للقيمة</Label>
+              <Input
+                id="maxAmount"
+                name="maxAmount"
+                type="number"
+                step="0.01"
+                min="0"
+                dir="ltr"
+                placeholder="20000"
+              />
+            </div>
           </div>
+          <p className="-mt-1 text-xs text-muted-foreground">
+            اتركهما فارغين إن لم يكن الإجراء مقيّداً بقيمة المستند.
+          </p>
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" name="requiresNote" className="h-4 w-4" />
             يتطلب إدخال ملاحظة
