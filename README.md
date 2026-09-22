@@ -1,36 +1,125 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# نظام ERP متكامل
 
-## Getting Started
+نظام تخطيط موارد المؤسسات (ERP) بواجهة عربية كاملة (RTL)، يغطي المخزون والمشتريات
+والمبيعات وإدارة العملاء والمحاسبة والموارد البشرية، مع **محرك سير عمل ديناميكي**
+تُعرَّف فيه حالات المستندات وقواعد الموافقة من الواجهة بدل تثبيتها في الكود.
 
-First, run the development server:
+## التقنيات
+
+| الطبقة | التقنية |
+|---|---|
+| الإطار | Next.js 16 (App Router) + TypeScript |
+| قاعدة البيانات | PostgreSQL 16 + Prisma 7 (عبر محوّل `@prisma/adapter-pg`) |
+| المصادقة | NextAuth v5 (Credentials) مع صلاحيات حسب الدور |
+| الواجهة | Tailwind CSS v4 + مكوّنات مخصّصة، خط Cairo، اتجاه RTL |
+| منطق الخادم | Server Actions + التحقق عبر Zod |
+
+## التشغيل محلياً
+
+المتطلبات: Node.js 20+ وPostgreSQL 16.
 
 ```bash
+# 1) تثبيت الاعتماديات
+npm install --legacy-peer-deps
+
+# 2) إعداد متغيرات البيئة
+cp .env.example .env
+#    عدّل DATABASE_URL ليشير لقاعدة بياناتك، وضع قيمة عشوائية طويلة في AUTH_SECRET
+
+# 3) إنشاء الجداول وتعبئة بيانات تجريبية
+npx prisma migrate dev
+npx prisma db seed
+
+# 4) التشغيل
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+ثم افتح <http://localhost:3000>.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+> ملاحظة: `--legacy-peer-deps` ضرورية بسبب خلل في إصدار npm الحالي عند حل شجرة
+> اعتماديات Prisma، وليست متطلباً للمشروع نفسه.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### حسابات الدخول التجريبية
 
-## Learn More
+كلمة المرور لجميع الحسابات: `Admin@123`
 
-To learn more about Next.js, take a look at the following resources:
+| البريد | الدور |
+|---|---|
+| `admin@erp.local` | مدير النظام (صلاحية كاملة) |
+| `accountant@erp.local` | محاسب |
+| `sales@erp.local` | مبيعات |
+| `purchasing@erp.local` | مشتريات |
+| `inventory@erp.local` | مخزون |
+| `hr@erp.local` | موارد بشرية |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## الوحدات
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- **المخزون**: المنتجات والفئات والمستودعات، أرصدة لكل منتج في كل مستودع، سجل
+  حركات، تسويات جرد، وتنبيهات إعادة الطلب.
+- **المشتريات**: الموردون وأوامر الشراء؛ استلام الأمر يزيد المخزون ويولّد قيداً
+  محاسبياً تلقائياً.
+- **المبيعات وCRM**: العملاء، الفرص البيعية، أوامر البيع؛ تأكيد الأمر يخصم من
+  المخزون، وإصدار الفاتورة يولّد قيد الإيراد وضريبة القيمة المضافة.
+- **المحاسبة**: دليل حسابات شجري، قيود يدوية متوازنة، قيود تلقائية من المبيعات
+  والمشتريات والمدفوعات والرواتب، وتقارير (ميزان مراجعة، قائمة دخل، ميزانية).
+- **الموارد البشرية**: الموظفون والأقسام والوظائف، طلبات الإجازات بسير موافقة،
+  وكشوف الرواتب مع ترحيل محاسبي عند الصرف.
 
-## Deploy on Vercel
+## محرك سير العمل الديناميكي
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+بدلاً من تثبيت حالات المستندات في الكود، تُخزَّن في قاعدة البيانات وتُدار من
+`/dashboard/workflows`:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- **الحالات** (`WorkflowState`): مفتاح، اسم معروض، لون، وهل هي ابتدائية أو نهائية.
+- **الانتقالات** (`WorkflowTransition`): من حالة إلى حالة، باسم إجراء يظهر كزر
+  للمستخدم، مقيّد بـ:
+  - **الأدوار المسموح لها** — مثلاً "الاعتماد" للمحاسب والمدير فقط.
+  - **حد أدنى للمبلغ** — مثلاً أوامر البيع فوق 20,000 لا يعتمدها إلا المدير.
+  - **ملاحظة إلزامية** — مثلاً عند الرفض أو الإلغاء.
+- **النسخ** (`WorkflowInstance`) تربط كل مستند بحالته الحالية، و`WorkflowHistory`
+  يحفظ من نفّذ كل إجراء ومتى وبأي ملاحظة.
+
+يُسمح بتعريف نشط واحد لكل نوع مستند، وهو الذي يُطبَّق على المستندات الجديدة.
+عند وصول مستند إلى حالة معيّنة يُنفَّذ الأثر المرتبط بها في نفس المعاملة
+(خصم مخزون، توليد فاتورة، ترحيل قيد)، فلا تفترق حالة المستند عن أثره المحاسبي.
+
+## بنية المشروع
+
+```
+prisma/
+  schema.prisma        # مخطط قاعدة البيانات لكل الوحدات
+  seed.ts              # بيانات تجريبية + تعريفات سير العمل الافتراضية
+src/
+  app/
+    login/             # صفحة الدخول
+    dashboard/         # لوحة التحكم وكل الوحدات
+  components/
+    ui/                # مكوّنات الواجهة المشتركة
+    workflow-panel.tsx # لوحة الإجراءات التي تظهر في صفحات المستندات
+    sidebar.tsx
+  lib/
+    db.ts              # عميل Prisma
+    auth.ts            # إعداد NextAuth
+    session.ts         # التحقق من الجلسة والصلاحيات
+    rbac.ts            # صلاحيات الوحدات لكل دور
+    workflow.ts        # محرك سير العمل
+    labels.ts          # ثوابت وتسميات آمنة لمكوّنات العميل
+    modules/
+      stock.ts               # حركات المخزون وتحديث الأرصدة
+      accounting-posting.ts  # الترحيل المحاسبي التلقائي
+```
+
+### ملاحظة للمطوّرين
+
+لا تستورد `@/generated/prisma` أو `@/lib/db` أو `@/lib/modules/*` داخل مكوّن
+يبدأ بـ `"use client"` — ذلك يسحب وحدات Node إلى حزمة المتصفح ويكسر الصفحة.
+استخدم `@/lib/labels` للثوابت المشتركة، أو مرّر القيم كـ props من مكوّن الخادم.
+
+## الأوامر
+
+```bash
+npm run dev      # تشغيل بيئة التطوير
+npm run build    # بناء للإنتاج
+npm run lint     # فحص الكود
+npx tsc --noEmit # فحص الأنواع
+```
