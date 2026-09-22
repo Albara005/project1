@@ -1,0 +1,56 @@
+import Link from "next/link";
+import { prisma } from "@/lib/db";
+import { requireModule } from "@/lib/session";
+import { Button, EmptyState, PageHeader } from "@/components/ui";
+import { ACCOUNT_TYPE_LABELS } from "@/app/dashboard/accounts/account-labels";
+import { toDateInputValue } from "@/app/dashboard/reports/date-range";
+import { JournalEntryForm } from "../journal-entry-form";
+
+export const dynamic = "force-dynamic";
+
+export default async function NewJournalEntryPage() {
+  await requireModule("accounting");
+
+  const accounts = await prisma.chartOfAccount.findMany({
+    where: { isActive: true },
+    orderBy: { code: "asc" },
+    select: { code: true, name: true, type: true },
+  });
+
+  // نمرّر نصوصاً بسيطة فقط إلى مكوّن العميل (لا نمرّر نماذج Prisma).
+  const options = accounts.map((account) => ({
+    code: account.code,
+    name: account.name,
+    typeLabel: ACCOUNT_TYPE_LABELS[account.type],
+  }));
+
+  return (
+    <div>
+      <PageHeader
+        title="قيد يدوي جديد"
+        description="أدخل سطور القيد. لن يُحفظ القيد إلا إذا تساوى إجمالي المدين مع إجمالي الدائن."
+        action={
+          <Link href="/dashboard/journal">
+            <Button type="button" variant="outline">
+              رجوع للقيود
+            </Button>
+          </Link>
+        }
+      />
+
+      {options.length === 0 ? (
+        <EmptyState
+          title="لا توجد حسابات نشطة"
+          description="أضف حسابات في دليل الحسابات قبل إنشاء قيد."
+          action={
+            <Link href="/dashboard/accounts">
+              <Button type="button">دليل الحسابات</Button>
+            </Link>
+          }
+        />
+      ) : (
+        <JournalEntryForm accounts={options} today={toDateInputValue(new Date())} />
+      )}
+    </div>
+  );
+}
