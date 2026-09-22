@@ -60,6 +60,8 @@ export const NAV_GROUPS: NavGroup[] = [
     title: "الإعدادات",
     items: [
       { href: "/dashboard/workflows", label: "سير العمل الديناميكي", module: "workflows" },
+      { href: "/dashboard/branches", label: "الفروع", module: "settings" },
+      { href: "/dashboard/currencies", label: "العملات وأسعار الصرف", module: "settings" },
       { href: "/dashboard/users", label: "المستخدمون", module: "settings" },
       { href: "/dashboard/settings", label: "إعدادات المنشأة", module: "settings" },
     ],
