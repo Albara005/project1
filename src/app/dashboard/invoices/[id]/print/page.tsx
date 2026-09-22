@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { requireModule } from "@/lib/session";
 import { formatDate, toNumber } from "@/lib/utils";
 import { PrintDocument } from "@/components/print-document";
+import { generateZatcaQrSvg } from "@/lib/modules/zatca";
 
 const STATUS_LABELS: Record<InvoiceStatus, string> = {
   DRAFT: "مسودة",
@@ -43,6 +44,17 @@ export default async function InvoicePrintPage({
   const party = isSales ? invoice.customer : invoice.supplier;
   const total = toNumber(invoice.total);
   const paid = toNumber(invoice.paidAmount);
+
+  // رمز ZATCA يُصدره البائع فقط، فلا يُضاف على فواتير المشتريات (البائع فيها هو المورد)
+  const qrSvg = isSales
+    ? await generateZatcaQrSvg({
+        sellerName: organization.legalName || organization.name,
+        vatNumber: organization.taxNumber,
+        timestamp: invoice.issueDate,
+        total,
+        vatTotal: toNumber(invoice.taxAmount),
+      })
+    : null;
 
   return (
     <PrintDocument
@@ -94,6 +106,7 @@ export default async function InvoicePrintPage({
         { label: "المتبقي", value: total - paid, emphasis: true },
       ]}
       note={invoice.note}
+      qrSvg={qrSvg}
     />
   );
 }

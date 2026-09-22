@@ -51,6 +51,7 @@ export function PrintDocument({
   extraTotals = [],
   note,
   footerNote,
+  qrSvg,
 }: {
   organization: PrintOrganization;
   title: string;
@@ -65,6 +66,8 @@ export function PrintDocument({
   extraTotals?: Array<{ label: string; value: number; emphasis?: boolean }>;
   note?: string | null;
   footerNote?: string;
+  /** رمز ZATCA بصيغة SVG جاهزة للتضمين؛ يُترك فارغاً للمستندات غير الخاضعة له. */
+  qrSvg?: string | null;
 }) {
   const currency = organization.currency;
 
@@ -192,10 +195,27 @@ export function PrintDocument({
         </div>
       </section>
 
-      {note ? (
-        <section className="mt-5 border-t border-gray-300 pt-3 text-xs text-gray-700">
-          <p className="mb-1 font-semibold">ملاحظات</p>
-          <p>{note}</p>
+      {note || qrSvg ? (
+        <section className="mt-5 flex items-start justify-between gap-6 border-t border-gray-300 pt-3">
+          <div className="text-xs text-gray-700">
+            {note ? (
+              <>
+                <p className="mb-1 font-semibold">ملاحظات</p>
+                <p>{note}</p>
+              </>
+            ) : null}
+          </div>
+
+          {qrSvg ? (
+            <div className="shrink-0 text-center">
+              <div
+                className="h-[120px] w-[120px]"
+                // الرمز مُولَّد في الخادم من بيانات المستند نفسه، لا من مدخلات المستخدم
+                dangerouslySetInnerHTML={{ __html: qrSvg }}
+              />
+              <p className="mt-1 text-[10px] text-gray-500">رمز الفاتورة الإلكترونية</p>
+            </div>
+          ) : null}
         </section>
       ) : null}
 

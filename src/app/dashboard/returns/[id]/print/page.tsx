@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { requireModule } from "@/lib/session";
 import { formatDate, toNumber } from "@/lib/utils";
 import { PrintDocument } from "@/components/print-document";
+import { generateZatcaQrSvg } from "@/lib/modules/zatca";
 import { RETURN_STATUS_LABELS, type ReturnStatusValue } from "../../labels";
 
 export default async function ReturnPrintPage({
@@ -35,6 +36,17 @@ export default async function ReturnPrintPage({
   if (!organization) notFound();
 
   const party = isSales ? note.customer : note.supplier;
+
+  // الإشعار الدائن يصدره البائع، أما الإشعار المدين فيُرسل للمورد ولا يحمل رمزنا
+  const qrSvg = isSales
+    ? await generateZatcaQrSvg({
+        sellerName: organization.legalName || organization.name,
+        vatNumber: organization.taxNumber,
+        timestamp: note.returnDate,
+        total: toNumber(note.total),
+        vatTotal: toNumber(note.taxAmount),
+      })
+    : null;
 
   return (
     <PrintDocument
@@ -80,6 +92,7 @@ export default async function ReturnPrintPage({
       taxAmount={toNumber(note.taxAmount)}
       total={toNumber(note.total)}
       note={note.reason}
+      qrSvg={qrSvg}
       footerNote={
         isSales
           ? "يخفّض هذا الإشعار المبلغ المستحق على العميل بقيمة المرتجع."
