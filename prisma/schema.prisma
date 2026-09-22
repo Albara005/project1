@@ -50,6 +50,8 @@ model User {
   isActive       Boolean  @default(true)
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branchId       String?
+  branch         Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -60,6 +62,74 @@ model User {
   auditLogs           AuditLog[]
 
   @@index([organizationId])
+}
+
+// ---------------------------------------------------------------------------
+// Currencies & Branches - العملات والفروع
+// ---------------------------------------------------------------------------
+
+/**
+ * العملات المتاحة. عملة واحدة فقط تكون عملة الأساس (isBase) وهي التي
+ * تُمسك بها الدفاتر وتُرحَّل بها كل القيود المحاسبية.
+ */
+model Currency {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  symbol    String
+  decimals  Int      @default(2)
+  isBase    Boolean  @default(false)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  rates          ExchangeRate[]
+  purchaseOrders PurchaseOrder[]
+  salesOrders    SalesOrder[]
+  invoices       Invoice[]
+  payments       Payment[]
+  returns        ReturnNote[]
+
+  @@index([isActive])
+}
+
+/**
+ * سعر صرف العملة مقابل عملة الأساس اعتباراً من تاريخ معيّن.
+ * rate = كم وحدة من عملة الأساس تساوي وحدة واحدة من هذه العملة.
+ */
+model ExchangeRate {
+  id           String   @id @default(cuid())
+  currencyId   String
+  currency     Currency @relation(fields: [currencyId], references: [id], onDelete: Cascade)
+  rate         Decimal  @db.Decimal(18, 6)
+  validFrom    DateTime @db.Date
+  createdAt    DateTime @default(now())
+
+  @@unique([currencyId, validFrom])
+  @@index([currencyId, validFrom])
+}
+
+model Branch {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  address   String?
+  phone     String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users          User[]
+  warehouses     Warehouse[]
+  purchaseOrders PurchaseOrder[]
+  salesOrders    SalesOrder[]
+  invoices       Invoice[]
+  payments       Payment[]
+  returns        ReturnNote[]
+  employees      Employee[]
+  journalEntries JournalEntry[]
+
+  @@index([isActive])
 }
 
 model AuditLog {
@@ -232,6 +302,8 @@ model Warehouse {
   code      String   @unique
   name      String
   location  String?
+  branchId  String?
+  branch    Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -323,12 +395,20 @@ model PurchaseOrder {
   warehouseId String
   warehouse   Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
   status      PurchaseOrderStatus @default(DRAFT)
+  branchId    String?
+  branch      Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  currencyId  String?
+  currency    Currency? @relation(fields: [currencyId], references: [id], onDelete: SetNull)
+  exchangeRate Decimal @db.Decimal(18, 6) @default(1)
   orderDate   DateTime @default(now())
   expectedDate DateTime?
   receivedAt  DateTime?
   subtotal    Decimal  @db.Decimal(18, 2) @default(0)
   taxAmount   Decimal  @db.Decimal(18, 2) @default(0)
   total       Decimal  @db.Decimal(18, 2) @default(0)
+  baseSubtotal Decimal @db.Decimal(18, 2) @default(0)
+  baseTaxAmount Decimal @db.Decimal(18, 2) @default(0)
+  baseTotal   Decimal  @db.Decimal(18, 2) @default(0)
   note        String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -422,12 +502,20 @@ model SalesOrder {
   warehouseId String
   warehouse   Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
   status      SalesOrderStatus @default(DRAFT)
+  branchId    String?
+  branch      Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  currencyId  String?
+  currency    Currency? @relation(fields: [currencyId], references: [id], onDelete: SetNull)
+  exchangeRate Decimal @db.Decimal(18, 6) @default(1)
   orderDate   DateTime @default(now())
   deliveryDate DateTime?
   confirmedAt DateTime?
   subtotal    Decimal  @db.Decimal(18, 2) @default(0)
   taxAmount   Decimal  @db.Decimal(18, 2) @default(0)
   total       Decimal  @db.Decimal(18, 2) @default(0)
+  baseSubtotal Decimal @db.Decimal(18, 2) @default(0)
+  baseTaxAmount Decimal @db.Decimal(18, 2) @default(0)
+  baseTotal   Decimal  @db.Decimal(18, 2) @default(0)
   note        String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -478,12 +566,20 @@ model Invoice {
   supplier     Supplier? @relation(fields: [supplierId], references: [id], onDelete: Restrict)
   salesOrderId String?
   salesOrder   SalesOrder? @relation(fields: [salesOrderId], references: [id], onDelete: SetNull)
+  branchId     String?
+  branch       Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  currencyId   String?
+  currency     Currency? @relation(fields: [currencyId], references: [id], onDelete: SetNull)
+  exchangeRate Decimal  @db.Decimal(18, 6) @default(1)
   issueDate    DateTime @default(now())
   dueDate      DateTime?
   subtotal     Decimal  @db.Decimal(18, 2) @default(0)
   taxAmount    Decimal  @db.Decimal(18, 2) @default(0)
   total        Decimal  @db.Decimal(18, 2) @default(0)
   paidAmount   Decimal  @db.Decimal(18, 2) @default(0)
+  baseSubtotal Decimal  @db.Decimal(18, 2) @default(0)
+  baseTaxAmount Decimal @db.Decimal(18, 2) @default(0)
+  baseTotal    Decimal  @db.Decimal(18, 2) @default(0)
   note         String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -541,12 +637,20 @@ model ReturnNote {
   invoice     Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
   warehouseId String
   warehouse   Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  branchId    String?
+  branch      Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  currencyId  String?
+  currency    Currency? @relation(fields: [currencyId], references: [id], onDelete: SetNull)
+  exchangeRate Decimal @db.Decimal(18, 6) @default(1)
   returnDate  DateTime @default(now())
   confirmedAt DateTime?
   reason      String?
   subtotal    Decimal  @db.Decimal(18, 2) @default(0)
   taxAmount   Decimal  @db.Decimal(18, 2) @default(0)
   total       Decimal  @db.Decimal(18, 2) @default(0)
+  baseSubtotal Decimal @db.Decimal(18, 2) @default(0)
+  baseTaxAmount Decimal @db.Decimal(18, 2) @default(0)
+  baseTotal   Decimal  @db.Decimal(18, 2) @default(0)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -591,7 +695,13 @@ model Payment {
   invoice     Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
   direction   PaymentDirection @default(INBOUND)
   method      PaymentMethod    @default(CASH)
+  branchId    String?
+  branch      Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  currencyId  String?
+  currency    Currency? @relation(fields: [currencyId], references: [id], onDelete: SetNull)
+  exchangeRate Decimal @db.Decimal(18, 6) @default(1)
   amount      Decimal  @db.Decimal(18, 2)
+  baseAmount  Decimal  @db.Decimal(18, 2) @default(0)
   paidAt      DateTime @default(now())
   reference   String?
   note        String?
@@ -647,6 +757,7 @@ enum JournalSourceType {
   PAYROLL
   SALES_RETURN
   PURCHASE_RETURN
+  FX_DIFFERENCE
 }
 
 model JournalEntry {
@@ -656,6 +767,8 @@ model JournalEntry {
   description String
   status      JournalEntryStatus @default(DRAFT)
   sourceType  JournalSourceType  @default(MANUAL)
+  branchId    String?
+  branch      Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
   createdById String?
   createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
   invoiceId   String?
@@ -741,6 +854,8 @@ model Employee {
   allowances   Decimal  @db.Decimal(18, 2) @default(0)
   departmentId String?
   department   Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  branchId     String?
+  branch       Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
   positionId   String?
   position     Position? @relation(fields: [positionId], references: [id], onDelete: SetNull)
   userId       String?  @unique

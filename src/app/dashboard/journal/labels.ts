@@ -10,6 +10,7 @@ export const SOURCE_TYPE_LABELS: Record<JournalSourceType, string> = {
   PAYROLL: "رواتب",
   SALES_RETURN: "مرتجع مبيعات",
   PURCHASE_RETURN: "مرتجع مشتريات",
+  FX_DIFFERENCE: "فرق عملة",
 };
 
 export const SOURCE_TYPE_TONES: Record<JournalSourceType, BadgeTone> = {
@@ -20,6 +21,7 @@ export const SOURCE_TYPE_TONES: Record<JournalSourceType, BadgeTone> = {
   PAYROLL: "amber",
   SALES_RETURN: "red",
   PURCHASE_RETURN: "red",
+  FX_DIFFERENCE: "purple",
 };
 
 export const ENTRY_STATUS_LABELS: Record<JournalEntryStatus, string> = {
@@ -42,6 +44,7 @@ export const SOURCE_TYPE_ORDER: JournalSourceType[] = [
   "PAYROLL",
   "SALES_RETURN",
   "PURCHASE_RETURN",
+  "FX_DIFFERENCE",
 ];
 
 export const ENTRY_STATUS_ORDER: JournalEntryStatus[] = [

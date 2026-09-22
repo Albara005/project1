@@ -48,6 +48,55 @@ async function main() {
     });
   }
 
+  // ---- العملات وأسعار الصرف ----
+  const currencies = [
+    { code: "SAR", name: "ريال سعودي", symbol: "ر.س", isBase: true },
+    { code: "USD", name: "دولار أمريكي", symbol: "$", isBase: false },
+    { code: "EUR", name: "يورو", symbol: "€", isBase: false },
+    { code: "AED", name: "درهم إماراتي", symbol: "د.إ", isBase: false },
+  ];
+  for (const currency of currencies) {
+    await prisma.currency.upsert({
+      where: { code: currency.code },
+      update: { name: currency.name, symbol: currency.symbol, isBase: currency.isBase },
+      create: currency,
+    });
+  }
+
+  // أسعار صرف افتتاحية مقابل الريال (كم ريالاً تساوي وحدة واحدة من العملة)
+  const openingRates: Record<string, number> = { USD: 3.75, EUR: 4.05, AED: 1.021 };
+  const rateDate = new Date(Date.UTC(new Date().getFullYear(), 0, 1));
+  for (const [code, rate] of Object.entries(openingRates)) {
+    const currency = await prisma.currency.findUniqueOrThrow({ where: { code } });
+    await prisma.exchangeRate.upsert({
+      where: { currencyId_validFrom: { currencyId: currency.id, validFrom: rateDate } },
+      update: { rate },
+      create: { currencyId: currency.id, rate, validFrom: rateDate },
+    });
+  }
+
+  // ---- الفروع ----
+  const branches = [
+    { code: "BR-RUH", name: "الفرع الرئيسي - الرياض", address: "الرياض - طريق الملك فهد" },
+    { code: "BR-JED", name: "فرع جدة", address: "جدة - شارع التحلية" },
+  ];
+  for (const branch of branches) {
+    await prisma.branch.upsert({
+      where: { code: branch.code },
+      update: {},
+      create: branch,
+    });
+  }
+
+  const mainBranch = await prisma.branch.findUniqueOrThrow({ where: { code: "BR-RUH" } });
+  const jeddahBranch = await prisma.branch.findUniqueOrThrow({ where: { code: "BR-JED" } });
+
+  // ربط المستخدمين بالفرع الرئيسي افتراضياً
+  await prisma.user.updateMany({
+    where: { branchId: null },
+    data: { branchId: mainBranch.id },
+  });
+
   // ---- دليل الحسابات ----
   // الحسابات الرئيسية أولاً، ثم الفرعية التي تشير إليها عبر parentCode
   const accounts: Array<{
@@ -67,10 +116,12 @@ async function main() {
     { code: "3100", name: "رأس المال", type: AccountType.EQUITY, parentCode: "3000" },
     { code: "4000", name: "الإيرادات", type: AccountType.REVENUE },
     { code: "4100", name: "إيرادات المبيعات", type: AccountType.REVENUE, parentCode: "4000" },
+    { code: "4200", name: "أرباح فروقات العملة", type: AccountType.REVENUE, parentCode: "4000" },
     { code: "5000", name: "المصروفات", type: AccountType.EXPENSE },
     { code: "5100", name: "تكلفة البضاعة المباعة", type: AccountType.EXPENSE, parentCode: "5000" },
     { code: "5200", name: "الرواتب والأجور", type: AccountType.EXPENSE, parentCode: "5000" },
     { code: "5300", name: "مصروفات عمومية وإدارية", type: AccountType.EXPENSE, parentCode: "5000" },
+    { code: "5400", name: "خسائر فروقات العملة", type: AccountType.EXPENSE, parentCode: "5000" },
   ];
 
   for (const { parentCode, ...account } of accounts) {
@@ -128,13 +179,13 @@ async function main() {
   }
 
   const warehouses = [
-    { code: "WH-MAIN", name: "المستودع الرئيسي", location: "الرياض - الصناعية" },
-    { code: "WH-JED", name: "مستودع جدة", location: "جدة - حي الخمرة" },
+    { code: "WH-MAIN", name: "المستودع الرئيسي", location: "الرياض - الصناعية", branchId: mainBranch.id },
+    { code: "WH-JED", name: "مستودع جدة", location: "جدة - حي الخمرة", branchId: jeddahBranch.id },
   ];
   for (const warehouse of warehouses) {
     await prisma.warehouse.upsert({
       where: { code: warehouse.code },
-      update: {},
+      update: { branchId: warehouse.branchId },
       create: warehouse,
     });
   }
@@ -243,8 +294,8 @@ async function main() {
   for (const employee of employees) {
     await prisma.employee.upsert({
       where: { employeeNo: employee.employeeNo },
-      update: {},
-      create: employee,
+      update: { branchId: mainBranch.id },
+      create: { ...employee, branchId: mainBranch.id },
     });
   }
 

@@ -17,8 +17,10 @@ export const ACCOUNT_CODES = {
   PAYABLES: "2100",
   VAT_PAYABLE: "2200",
   SALES_REVENUE: "4100",
+  FX_GAIN: "4200",
   COGS: "5100",
   SALARIES: "5200",
+  FX_LOSS: "5400",
 } as const;
 
 export type JournalLineInput = {
@@ -74,6 +76,7 @@ export async function postJournalEntry(
     salesOrderId?: string;
     paymentId?: string;
     returnNoteId?: string;
+    branchId?: string | null;
   },
 ) {
   const lines = input.lines.filter(
@@ -120,6 +123,7 @@ export async function postJournalEntry(
       salesOrderId: input.salesOrderId ?? null,
       paymentId: input.paymentId ?? null,
       returnNoteId: input.returnNoteId ?? null,
+      branchId: input.branchId ?? null,
       lines: {
         create: lines.map((line) => ({
           accountId: accountByCode.get(line.accountCode)!,
@@ -144,9 +148,11 @@ export async function postSalesInvoice(
     taxAmount: number;
     total: number;
     createdById?: string;
+    branchId?: string | null;
   },
 ) {
   return postJournalEntry(client, {
+    branchId: input.branchId,
     description: `فاتورة مبيعات ${input.number}`,
     sourceType: JournalSourceType.SALES_INVOICE,
     invoiceId: input.invoiceId,
@@ -171,9 +177,11 @@ export async function postPurchaseReceipt(
     taxAmount: number;
     total: number;
     createdById?: string;
+    branchId?: string | null;
   },
 ) {
   return postJournalEntry(client, {
+    branchId: input.branchId,
     description: `استلام أمر شراء ${input.number}`,
     sourceType: JournalSourceType.PURCHASE_ORDER,
     purchaseOrderId: input.purchaseOrderId,
@@ -197,6 +205,7 @@ export async function postPayment(
     amount: number;
     direction: "INBOUND" | "OUTBOUND";
     createdById?: string;
+    branchId?: string | null;
   },
 ) {
   const lines: JournalLineInput[] =
@@ -213,6 +222,7 @@ export async function postPayment(
   return postJournalEntry(client, {
     description: `سند ${input.direction === "INBOUND" ? "قبض" : "صرف"} ${input.number}`,
     sourceType: JournalSourceType.PAYMENT,
+    branchId: input.branchId,
     paymentId: input.paymentId,
     createdById: input.createdById,
     lines,
@@ -232,9 +242,11 @@ export async function postSalesReturn(
     taxAmount: number;
     total: number;
     createdById?: string;
+    branchId?: string | null;
   },
 ) {
   return postJournalEntry(client, {
+    branchId: input.branchId,
     description: `مرتجع مبيعات ${input.number}`,
     sourceType: JournalSourceType.SALES_RETURN,
     returnNoteId: input.returnNoteId,
@@ -260,9 +272,11 @@ export async function postPurchaseReturn(
     taxAmount: number;
     total: number;
     createdById?: string;
+    branchId?: string | null;
   },
 ) {
   return postJournalEntry(client, {
+    branchId: input.branchId,
     description: `مرتجع مشتريات ${input.number}`,
     sourceType: JournalSourceType.PURCHASE_RETURN,
     returnNoteId: input.returnNoteId,
@@ -275,14 +289,67 @@ export async function postPurchaseReturn(
   });
 }
 
+/**
+ * قيد فرق عملة محقّق عند السداد: يظهر حين يختلف سعر الصرف وقت التحصيل
+ * عن سعره وقت إصدار الفاتورة، فيُقفل الفرق في حساب أرباح أو خسائر العملة
+ * مقابل ذمم الطرف.
+ *
+ * `difference` موجب = ربح، سالب = خسارة.
+ */
+export async function postFxDifference(
+  client: TxClient,
+  input: {
+    description: string;
+    difference: number;
+    direction: "INBOUND" | "OUTBOUND";
+    paymentId?: string;
+    createdById?: string;
+    branchId?: string | null;
+  },
+) {
+  const amount = Math.abs(input.difference);
+  if (amount < 0.01) return null;
+
+  const isGain = input.difference > 0;
+  const partyAccount =
+    input.direction === "INBOUND" ? ACCOUNT_CODES.RECEIVABLES : ACCOUNT_CODES.PAYABLES;
+
+  // الربح يُقفل دائناً في حساب الأرباح مقابل تخفيض إضافي في ذمم الطرف،
+  // والخسارة مديناً في حساب الخسائر مقابل زيادة في الذمم.
+  const lines: JournalLineInput[] = isGain
+    ? [
+        { accountCode: partyAccount, debit: amount, description: "فرق عملة" },
+        { accountCode: ACCOUNT_CODES.FX_GAIN, credit: amount, description: "أرباح فروقات عملة" },
+      ]
+    : [
+        { accountCode: ACCOUNT_CODES.FX_LOSS, debit: amount, description: "خسائر فروقات عملة" },
+        { accountCode: partyAccount, credit: amount, description: "فرق عملة" },
+      ];
+
+  return postJournalEntry(client, {
+    description: input.description,
+    sourceType: JournalSourceType.FX_DIFFERENCE,
+    paymentId: input.paymentId,
+    createdById: input.createdById,
+    branchId: input.branchId,
+    lines,
+  });
+}
+
 /** قيد رواتب: مدين مصروف الرواتب، دائن النقدية. */
 export async function postPayrollEntry(
   client: TxClient,
-  input: { description: string; amount: number; createdById?: string },
+  input: {
+    description: string;
+    amount: number;
+    createdById?: string;
+    branchId?: string | null;
+  },
 ) {
   return postJournalEntry(client, {
     description: input.description,
     sourceType: JournalSourceType.PAYROLL,
+    branchId: input.branchId,
     createdById: input.createdById,
     lines: [
       { accountCode: ACCOUNT_CODES.SALARIES, debit: input.amount, description: "مصروف رواتب" },
