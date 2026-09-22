@@ -1,0 +1,29 @@
+"use server";
+
+import { AuthError } from "next-auth";
+import { signIn, signOut } from "@/lib/auth";
+
+export type LoginState = { error?: string };
+
+export async function loginAction(
+  _prev: LoginState,
+  formData: FormData,
+): Promise<LoginState> {
+  try {
+    await signIn("credentials", {
+      email: String(formData.get("email") ?? ""),
+      password: String(formData.get("password") ?? ""),
+      redirectTo: "/dashboard",
+    });
+    return {};
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return { error: "البريد الإلكتروني أو كلمة المرور غير صحيحة" };
+    }
+    throw error;
+  }
+}
+
+export async function logoutAction() {
+  await signOut({ redirectTo: "/login" });
+}
