@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useRef, useState } from "react";
+import { useActionState, useEffect, useRef } from "react";
 import { useFormStatus } from "react-dom";
 import { Button, Input, Label, Select } from "@/components/ui";
 import { saveEmployee, type ActionState } from "./actions";
@@ -46,22 +46,24 @@ export function EmployeeForm({
 }) {
   const [state, formAction] = useActionState<ActionState, FormData>(saveEmployee, {});
   const formRef = useRef<HTMLFormElement>(null);
-  const [departmentId, setDepartmentId] = useState(employee?.departmentId ?? "");
 
   const isEdit = Boolean(employee?.id);
 
   useEffect(() => {
     if (state.success && !isEdit) {
       formRef.current?.reset();
-      setDepartmentId("");
     }
   }, [state, isEdit]);
 
-  const visiblePositions = departmentId
-    ? positions.filter(
-        (position) => position.departmentId === departmentId || position.departmentId === null,
-      )
-    : positions;
+  // المسميات الوظيفية مجمّعة تحت أقسامها ليسهل اختيار المسمى الصحيح.
+  const positionGroups = departments
+    .map((department) => ({
+      name: department.name,
+      items: positions.filter((position) => position.departmentId === department.id),
+    }))
+    .filter((group) => group.items.length > 0);
+
+  const unassignedPositions = positions.filter((position) => position.departmentId === null);
 
   return (
     <form ref={formRef} action={formAction} className="space-y-4">
@@ -109,8 +111,7 @@ export function EmployeeForm({
           <Select
             id="departmentId"
             name="departmentId"
-            value={departmentId}
-            onChange={(event) => setDepartmentId(event.target.value)}
+            defaultValue={employee?.departmentId ?? ""}
           >
             <option value="">— بدون قسم —</option>
             {departments.map((department) => (
@@ -124,11 +125,24 @@ export function EmployeeForm({
           <Label htmlFor="positionId">المسمى الوظيفي</Label>
           <Select id="positionId" name="positionId" defaultValue={employee?.positionId ?? ""}>
             <option value="">— بدون مسمى —</option>
-            {visiblePositions.map((position) => (
-              <option key={position.id} value={position.id}>
-                {position.title}
-              </option>
+            {positionGroups.map((group) => (
+              <optgroup key={group.name} label={group.name}>
+                {group.items.map((position) => (
+                  <option key={position.id} value={position.id}>
+                    {position.title}
+                  </option>
+                ))}
+              </optgroup>
             ))}
+            {unassignedPositions.length > 0 ? (
+              <optgroup label="بدون قسم">
+                {unassignedPositions.map((position) => (
+                  <option key={position.id} value={position.id}>
+                    {position.title}
+                  </option>
+                ))}
+              </optgroup>
+            ) : null}
           </Select>
         </div>
         <div>

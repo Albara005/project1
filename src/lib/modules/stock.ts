@@ -70,12 +70,17 @@ export async function applyStockMovement(
     data: { quantity: new Prisma.Decimal(newQuantity) },
   });
 
+  // التسوية تحتفظ بإشارتها لأن اتجاهها لا يُفهم من نوع الحركة،
+  // بينما بقية الأنواع يحدد النوع اتجاهها فتُخزَّن الكمية موجبة.
+  const recordedQuantity =
+    input.type === StockMovementType.ADJUSTMENT ? signedQuantity : Math.abs(signedQuantity);
+
   await client.stockMovement.create({
     data: {
       productId: input.productId,
       warehouseId: input.warehouseId,
       type: input.type,
-      quantity: new Prisma.Decimal(Math.abs(signedQuantity)),
+      quantity: new Prisma.Decimal(recordedQuantity),
       unitCost: input.unitCost != null ? new Prisma.Decimal(input.unitCost) : null,
       reference: input.reference ?? null,
       note: input.note ?? null,

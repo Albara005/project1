@@ -49,29 +49,39 @@ async function main() {
   }
 
   // ---- دليل الحسابات ----
-  const accounts: Array<{ code: string; name: string; type: AccountType }> = [
+  // الحسابات الرئيسية أولاً، ثم الفرعية التي تشير إليها عبر parentCode
+  const accounts: Array<{
+    code: string;
+    name: string;
+    type: AccountType;
+    parentCode?: string;
+  }> = [
     { code: "1000", name: "الأصول", type: AccountType.ASSET },
-    { code: "1100", name: "النقدية وما في حكمها", type: AccountType.ASSET },
-    { code: "1200", name: "الذمم المدينة (العملاء)", type: AccountType.ASSET },
-    { code: "1300", name: "المخزون", type: AccountType.ASSET },
+    { code: "1100", name: "النقدية وما في حكمها", type: AccountType.ASSET, parentCode: "1000" },
+    { code: "1200", name: "الذمم المدينة (العملاء)", type: AccountType.ASSET, parentCode: "1000" },
+    { code: "1300", name: "المخزون", type: AccountType.ASSET, parentCode: "1000" },
     { code: "2000", name: "الخصوم", type: AccountType.LIABILITY },
-    { code: "2100", name: "الذمم الدائنة (الموردون)", type: AccountType.LIABILITY },
-    { code: "2200", name: "ضريبة القيمة المضافة المستحقة", type: AccountType.LIABILITY },
+    { code: "2100", name: "الذمم الدائنة (الموردون)", type: AccountType.LIABILITY, parentCode: "2000" },
+    { code: "2200", name: "ضريبة القيمة المضافة المستحقة", type: AccountType.LIABILITY, parentCode: "2000" },
     { code: "3000", name: "حقوق الملكية", type: AccountType.EQUITY },
-    { code: "3100", name: "رأس المال", type: AccountType.EQUITY },
+    { code: "3100", name: "رأس المال", type: AccountType.EQUITY, parentCode: "3000" },
     { code: "4000", name: "الإيرادات", type: AccountType.REVENUE },
-    { code: "4100", name: "إيرادات المبيعات", type: AccountType.REVENUE },
+    { code: "4100", name: "إيرادات المبيعات", type: AccountType.REVENUE, parentCode: "4000" },
     { code: "5000", name: "المصروفات", type: AccountType.EXPENSE },
-    { code: "5100", name: "تكلفة البضاعة المباعة", type: AccountType.EXPENSE },
-    { code: "5200", name: "الرواتب والأجور", type: AccountType.EXPENSE },
-    { code: "5300", name: "مصروفات عمومية وإدارية", type: AccountType.EXPENSE },
+    { code: "5100", name: "تكلفة البضاعة المباعة", type: AccountType.EXPENSE, parentCode: "5000" },
+    { code: "5200", name: "الرواتب والأجور", type: AccountType.EXPENSE, parentCode: "5000" },
+    { code: "5300", name: "مصروفات عمومية وإدارية", type: AccountType.EXPENSE, parentCode: "5000" },
   ];
 
-  for (const account of accounts) {
+  for (const { parentCode, ...account } of accounts) {
+    const parent = parentCode
+      ? await prisma.chartOfAccount.findUnique({ where: { code: parentCode } })
+      : null;
+
     await prisma.chartOfAccount.upsert({
       where: { code: account.code },
-      update: { name: account.name, type: account.type },
-      create: account,
+      update: { name: account.name, type: account.type, parentId: parent?.id ?? null },
+      create: { ...account, parentId: parent?.id ?? null },
     });
   }
 
