@@ -1,4 +1,6 @@
-import { Role } from "@/generated/prisma";
+import type { Role } from "@/generated/prisma";
+
+export { ROLE_LABELS } from "@/lib/labels";
 
 export type ModuleKey =
   | "dashboard"
@@ -26,13 +28,3 @@ export function canAccessModule(role: Role, module: ModuleKey): boolean {
   const allowed = MODULE_ACCESS[role];
   return allowed === "*" || allowed.includes(module);
 }
-
-export const ROLE_LABELS: Record<Role, string> = {
-  ADMIN: "مدير النظام",
-  ACCOUNTANT: "محاسب",
-  SALES: "مبيعات",
-  PURCHASING: "مشتريات",
-  INVENTORY: "مخزون",
-  HR: "موارد بشرية",
-  EMPLOYEE: "موظف",
-};

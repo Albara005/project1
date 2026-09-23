@@ -28,7 +28,7 @@ export function Sidebar({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="fixed top-3 start-3 z-30 rounded-lg bg-sidebar p-2 text-sidebar-foreground lg:hidden"
+        className="fixed top-3 start-3 z-30 rounded-lg bg-sidebar p-2 text-sidebar-foreground lg:hidden print:hidden"
         aria-label="فتح القائمة"
       >
         <Menu className="h-5 w-5" />
@@ -43,9 +43,10 @@ export function Sidebar({
 
       <aside
         className={cn(
-          "fixed inset-y-0 z-40 flex w-64 flex-col bg-sidebar text-sidebar-foreground transition-transform lg:static lg:translate-x-0",
+          "fixed inset-y-0 z-40 flex w-64 flex-col bg-sidebar text-sidebar-foreground transition-transform lg:static lg:translate-x-0 print:hidden",
           open ? "translate-x-0" : "translate-x-full lg:translate-x-0",
-          "end-0 lg:end-auto",
+          // في RTL تكون بداية السطر يميناً، فتُخفى الشريحة بإزاحتها يميناً خارج الشاشة
+          "start-0 lg:start-auto",
         )}
       >
         <div className="flex items-center justify-between gap-2 px-5 py-5">

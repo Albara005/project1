@@ -50,6 +50,8 @@ model User {
   isActive       Boolean  @default(true)
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branchId       String?
+  branch         Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -60,6 +62,165 @@ model User {
   auditLogs           AuditLog[]
 
   @@index([organizationId])
+}
+
+// ---------------------------------------------------------------------------
+// Currencies & Branches - العملات والفروع
+// ---------------------------------------------------------------------------
+
+/**
+ * العملات المتاحة. عملة واحدة فقط تكون عملة الأساس (isBase) وهي التي
+ * تُمسك بها الدفاتر وتُرحَّل بها كل القيود المحاسبية.
+ */
+model Currency {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  symbol    String
+  decimals  Int      @default(2)
+  isBase    Boolean  @default(false)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  rates          ExchangeRate[]
+  purchaseOrders PurchaseOrder[]
+  salesOrders    SalesOrder[]
+  invoices       Invoice[]
+  payments       Payment[]
+  returns        ReturnNote[]
+
+  @@index([isActive])
+}
+
+/**
+ * سعر صرف العملة مقابل عملة الأساس اعتباراً من تاريخ معيّن.
+ * rate = كم وحدة من عملة الأساس تساوي وحدة واحدة من هذه العملة.
+ */
+model ExchangeRate {
+  id           String   @id @default(cuid())
+  currencyId   String
+  currency     Currency @relation(fields: [currencyId], references: [id], onDelete: Cascade)
+  rate         Decimal  @db.Decimal(18, 6)
+  validFrom    DateTime @db.Date
+  createdAt    DateTime @default(now())
+
+  @@unique([currencyId, validFrom])
+  @@index([currencyId, validFrom])
+}
+
+model Branch {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  address   String?
+  phone     String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users          User[]
+  warehouses     Warehouse[]
+  purchaseOrders PurchaseOrder[]
+  salesOrders    SalesOrder[]
+  invoices       Invoice[]
+  payments       Payment[]
+  returns        ReturnNote[]
+  employees      Employee[]
+  journalEntries JournalEntry[]
+
+  @@index([isActive])
+}
+
+// ---------------------------------------------------------------------------
+// E-Invoicing Phase 2 - الفوترة الإلكترونية (مرحلة التكامل)
+// ---------------------------------------------------------------------------
+
+/** نوع المستند في معيار ZATCA: قياسية تُجاز قبل الإرسال، ومبسطة تُبلَّغ خلال 24 ساعة. */
+enum EInvoiceType {
+  STANDARD
+  SIMPLIFIED
+}
+
+enum EInvoiceStatus {
+  /** أُنشئ الـXML ولم يُوقَّع بعد */
+  GENERATED
+  /** وُقِّع تشفيرياً وجاهز للإرسال */
+  SIGNED
+  /** أُرسل للهيئة وينتظر الرد */
+  SUBMITTED
+  /** مبسطة: بُلِّغت بنجاح */
+  REPORTED
+  /** قياسية: أُجيزت من الهيئة */
+  CLEARED
+  /** قُبلت مع ملاحظات */
+  ACCEPTED_WITH_WARNINGS
+  /** رُفضت */
+  REJECTED
+  FAILED
+}
+
+/**
+ * سجل الفوترة الإلكترونية لكل فاتورة: يحفظ الـXML وتجزئته وتسلسلها.
+ *
+ * التسلسل جوهر المرحلة الثانية: كل فاتورة تحمل عدّاداً متتابعاً (ICV) وتجزئة
+ * الفاتورة السابقة (PIH)، فتتكوّن سلسلة لا يمكن حذف حلقة منها أو تعديلها
+ * دون أن ينكسر التحقق.
+ */
+model EInvoice {
+  id             String   @id @default(cuid())
+  invoiceId      String   @unique
+  invoice        Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  uuid           String   @unique
+  /** عدّاد الفاتورة المتتابع على مستوى جهاز الإصدار */
+  icv            BigInt
+  /** تجزئة هذه الفاتورة (SHA-256 بترميز base64) */
+  hash           String
+  /** تجزئة الفاتورة السابقة في السلسلة */
+  previousHash   String
+  type           EInvoiceType
+  status         EInvoiceStatus @default(GENERATED)
+  xml            String
+  signedXml      String?
+  /** رمز QR للمرحلة الثانية (TLV بتسعة حقول) */
+  qrCode         String?
+  /** التوقيع التشفيري بترميز base64 */
+  signature      String?
+  submittedAt    DateTime?
+  /** رد الهيئة كما ورد، للتشخيص والمراجعة */
+  responseStatus String?
+  responseBody   String?
+  warnings       String?
+  errors         String?
+  attempts       Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([status])
+  @@index([icv])
+}
+
+/**
+ * بيانات اعتماد جهاز الإصدار لدى الهيئة. المفتاح الخاص لا يغادر الخادم،
+ * وشهادة الإنتاج (CSID) تُصدر بعد اجتياز فحوص التوافق.
+ */
+model EInvoiceCredential {
+  id                String   @id @default(cuid())
+  /** اسم الجهاز/الوحدة كما سُجّل لدى الهيئة */
+  deviceName        String   @unique
+  environment       String   @default("sandbox")
+  privateKeyPem     String
+  publicKeyPem      String
+  csrPem            String
+  complianceCsid    String?
+  complianceSecret  String?
+  productionCsid    String?
+  productionSecret  String?
+  certificatePem    String?
+  isActive          Boolean  @default(false)
+  onboardedAt       DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 }
 
 model AuditLog {
@@ -142,6 +303,7 @@ model WorkflowTransition {
   label          String
   allowedRoles   Role[]
   minAmount      Decimal? @db.Decimal(18, 2)
+  maxAmount      Decimal? @db.Decimal(18, 2)
   requiresNote   Boolean  @default(false)
   sortOrder      Int      @default(0)
 
@@ -221,6 +383,7 @@ model Product {
   purchaseOrderItems PurchaseOrderItem[]
   salesOrderItems    SalesOrderItem[]
   invoiceItems       InvoiceItem[]
+  returnItems        ReturnNoteItem[]
 
   @@index([categoryId])
 }
@@ -230,6 +393,8 @@ model Warehouse {
   code      String   @unique
   name      String
   location  String?
+  branchId  String?
+  branch    Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -238,6 +403,7 @@ model Warehouse {
   stockMovements StockMovement[]
   purchaseOrders PurchaseOrder[]
   salesOrders    SalesOrder[]
+  returns        ReturnNote[]
 }
 
 // الرصيد الحالي لكل منتج في كل مستودع
@@ -301,6 +467,7 @@ model Supplier {
 
   purchaseOrders PurchaseOrder[]
   bills          Invoice[]
+  returns        ReturnNote[]
 }
 
 enum PurchaseOrderStatus {
@@ -319,12 +486,20 @@ model PurchaseOrder {
   warehouseId String
   warehouse   Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
   status      PurchaseOrderStatus @default(DRAFT)
+  branchId    String?
+  branch      Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  currencyId  String?
+  currency    Currency? @relation(fields: [currencyId], references: [id], onDelete: SetNull)
+  exchangeRate Decimal @db.Decimal(18, 6) @default(1)
   orderDate   DateTime @default(now())
   expectedDate DateTime?
   receivedAt  DateTime?
   subtotal    Decimal  @db.Decimal(18, 2) @default(0)
   taxAmount   Decimal  @db.Decimal(18, 2) @default(0)
   total       Decimal  @db.Decimal(18, 2) @default(0)
+  baseSubtotal Decimal @db.Decimal(18, 2) @default(0)
+  baseTaxAmount Decimal @db.Decimal(18, 2) @default(0)
+  baseTotal   Decimal  @db.Decimal(18, 2) @default(0)
   note        String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -371,6 +546,7 @@ model Customer {
   salesOrders SalesOrder[]
   invoices    Invoice[]
   leads       Lead[]
+  returns     ReturnNote[]
 }
 
 enum LeadStatus {
@@ -417,12 +593,20 @@ model SalesOrder {
   warehouseId String
   warehouse   Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
   status      SalesOrderStatus @default(DRAFT)
+  branchId    String?
+  branch      Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  currencyId  String?
+  currency    Currency? @relation(fields: [currencyId], references: [id], onDelete: SetNull)
+  exchangeRate Decimal @db.Decimal(18, 6) @default(1)
   orderDate   DateTime @default(now())
   deliveryDate DateTime?
   confirmedAt DateTime?
   subtotal    Decimal  @db.Decimal(18, 2) @default(0)
   taxAmount   Decimal  @db.Decimal(18, 2) @default(0)
   total       Decimal  @db.Decimal(18, 2) @default(0)
+  baseSubtotal Decimal @db.Decimal(18, 2) @default(0)
+  baseTaxAmount Decimal @db.Decimal(18, 2) @default(0)
+  baseTotal   Decimal  @db.Decimal(18, 2) @default(0)
   note        String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -473,12 +657,20 @@ model Invoice {
   supplier     Supplier? @relation(fields: [supplierId], references: [id], onDelete: Restrict)
   salesOrderId String?
   salesOrder   SalesOrder? @relation(fields: [salesOrderId], references: [id], onDelete: SetNull)
+  branchId     String?
+  branch       Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  currencyId   String?
+  currency     Currency? @relation(fields: [currencyId], references: [id], onDelete: SetNull)
+  exchangeRate Decimal  @db.Decimal(18, 6) @default(1)
   issueDate    DateTime @default(now())
   dueDate      DateTime?
   subtotal     Decimal  @db.Decimal(18, 2) @default(0)
   taxAmount    Decimal  @db.Decimal(18, 2) @default(0)
   total        Decimal  @db.Decimal(18, 2) @default(0)
   paidAmount   Decimal  @db.Decimal(18, 2) @default(0)
+  baseSubtotal Decimal  @db.Decimal(18, 2) @default(0)
+  baseTaxAmount Decimal @db.Decimal(18, 2) @default(0)
+  baseTotal    Decimal  @db.Decimal(18, 2) @default(0)
   note         String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -486,6 +678,8 @@ model Invoice {
   items        InvoiceItem[]
   payments     Payment[]
   journalEntries JournalEntry[]
+  returns      ReturnNote[]
+  eInvoice     EInvoice?
 
   @@index([customerId])
   @@index([supplierId])
@@ -507,6 +701,73 @@ model InvoiceItem {
   @@index([invoiceId])
 }
 
+// ---------------------------------------------------------------------------
+// Returns - المرتجعات (مبيعات ومشتريات)
+// ---------------------------------------------------------------------------
+
+enum ReturnType {
+  SALES
+  PURCHASE
+}
+
+enum ReturnStatus {
+  DRAFT
+  CONFIRMED
+  CANCELLED
+}
+
+model ReturnNote {
+  id          String   @id @default(cuid())
+  number      String   @unique
+  type        ReturnType
+  status      ReturnStatus @default(DRAFT)
+  customerId  String?
+  customer    Customer? @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  supplierId  String?
+  supplier    Supplier? @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  invoiceId   String?
+  invoice     Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  warehouseId String
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  branchId    String?
+  branch      Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  currencyId  String?
+  currency    Currency? @relation(fields: [currencyId], references: [id], onDelete: SetNull)
+  exchangeRate Decimal @db.Decimal(18, 6) @default(1)
+  returnDate  DateTime @default(now())
+  confirmedAt DateTime?
+  reason      String?
+  subtotal    Decimal  @db.Decimal(18, 2) @default(0)
+  taxAmount   Decimal  @db.Decimal(18, 2) @default(0)
+  total       Decimal  @db.Decimal(18, 2) @default(0)
+  baseSubtotal Decimal @db.Decimal(18, 2) @default(0)
+  baseTaxAmount Decimal @db.Decimal(18, 2) @default(0)
+  baseTotal   Decimal  @db.Decimal(18, 2) @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items          ReturnNoteItem[]
+  journalEntries JournalEntry[]
+
+  @@index([type])
+  @@index([status])
+  @@index([invoiceId])
+}
+
+model ReturnNoteItem {
+  id           String   @id @default(cuid())
+  returnNoteId String
+  returnNote   ReturnNote @relation(fields: [returnNoteId], references: [id], onDelete: Cascade)
+  productId    String
+  product      Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+  quantity     Decimal  @db.Decimal(18, 3)
+  unitPrice    Decimal  @db.Decimal(18, 2)
+  taxRate      Decimal  @db.Decimal(5, 2) @default(15)
+  lineTotal    Decimal  @db.Decimal(18, 2)
+
+  @@index([returnNoteId])
+}
+
 enum PaymentMethod {
   CASH
   BANK_TRANSFER
@@ -526,7 +787,13 @@ model Payment {
   invoice     Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
   direction   PaymentDirection @default(INBOUND)
   method      PaymentMethod    @default(CASH)
+  branchId    String?
+  branch      Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  currencyId  String?
+  currency    Currency? @relation(fields: [currencyId], references: [id], onDelete: SetNull)
+  exchangeRate Decimal @db.Decimal(18, 6) @default(1)
   amount      Decimal  @db.Decimal(18, 2)
+  baseAmount  Decimal  @db.Decimal(18, 2) @default(0)
   paidAt      DateTime @default(now())
   reference   String?
   note        String?
@@ -540,6 +807,14 @@ model Payment {
 // ---------------------------------------------------------------------------
 // Accounting - المحاسبة
 // ---------------------------------------------------------------------------
+
+/** تصنيف الحساب في قائمة التدفقات النقدية. */
+enum CashFlowCategory {
+  OPERATING
+  INVESTING
+  FINANCING
+  CASH
+}
 
 enum AccountType {
   ASSET
@@ -559,6 +834,11 @@ model ChartOfAccount {
   children    ChartOfAccount[] @relation("AccountTree")
   isActive    Boolean  @default(true)
   description String?
+  /**
+   * تصنيف الحساب في قائمة التدفقات النقدية. CASH يعني أن الحساب نقدية أو ما
+   * في حكمها فتُقاس حركته لا تُصنَّف. الحساب بلا تصنيف يُعامل كنشاط تشغيلي.
+   */
+  cashFlowCategory CashFlowCategory?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -580,6 +860,9 @@ enum JournalSourceType {
   PURCHASE_ORDER
   PAYMENT
   PAYROLL
+  SALES_RETURN
+  PURCHASE_RETURN
+  FX_DIFFERENCE
 }
 
 model JournalEntry {
@@ -589,6 +872,8 @@ model JournalEntry {
   description String
   status      JournalEntryStatus @default(DRAFT)
   sourceType  JournalSourceType  @default(MANUAL)
+  branchId    String?
+  branch      Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
   createdById String?
   createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
   invoiceId   String?
@@ -599,6 +884,8 @@ model JournalEntry {
   salesOrder   SalesOrder? @relation(fields: [salesOrderId], references: [id], onDelete: SetNull)
   paymentId   String?
   payment     Payment? @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  returnNoteId String?
+  returnNote   ReturnNote? @relation(fields: [returnNoteId], references: [id], onDelete: SetNull)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -672,6 +959,8 @@ model Employee {
   allowances   Decimal  @db.Decimal(18, 2) @default(0)
   departmentId String?
   department   Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  branchId     String?
+  branch       Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
   positionId   String?
   position     Position? @relation(fields: [positionId], references: [id], onDelete: SetNull)
   userId       String?  @unique

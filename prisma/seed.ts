@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { PrismaPg } from "@prisma/adapter-pg";
 import {
   AccountType,
+  CashFlowCategory,
   PrismaClient,
   Role,
   WorkflowEntityType,
@@ -48,30 +49,99 @@ async function main() {
     });
   }
 
+  // ---- العملات وأسعار الصرف ----
+  const currencies = [
+    { code: "SAR", name: "ريال سعودي", symbol: "ر.س", isBase: true },
+    { code: "USD", name: "دولار أمريكي", symbol: "$", isBase: false },
+    { code: "EUR", name: "يورو", symbol: "€", isBase: false },
+    { code: "AED", name: "درهم إماراتي", symbol: "د.إ", isBase: false },
+  ];
+  for (const currency of currencies) {
+    await prisma.currency.upsert({
+      where: { code: currency.code },
+      update: { name: currency.name, symbol: currency.symbol, isBase: currency.isBase },
+      create: currency,
+    });
+  }
+
+  // أسعار صرف افتتاحية مقابل الريال (كم ريالاً تساوي وحدة واحدة من العملة)
+  const openingRates: Record<string, number> = { USD: 3.75, EUR: 4.05, AED: 1.021 };
+  const rateDate = new Date(Date.UTC(new Date().getFullYear(), 0, 1));
+  for (const [code, rate] of Object.entries(openingRates)) {
+    const currency = await prisma.currency.findUniqueOrThrow({ where: { code } });
+    await prisma.exchangeRate.upsert({
+      where: { currencyId_validFrom: { currencyId: currency.id, validFrom: rateDate } },
+      update: { rate },
+      create: { currencyId: currency.id, rate, validFrom: rateDate },
+    });
+  }
+
+  // ---- الفروع ----
+  const branches = [
+    { code: "BR-RUH", name: "الفرع الرئيسي - الرياض", address: "الرياض - طريق الملك فهد" },
+    { code: "BR-JED", name: "فرع جدة", address: "جدة - شارع التحلية" },
+  ];
+  for (const branch of branches) {
+    await prisma.branch.upsert({
+      where: { code: branch.code },
+      update: {},
+      create: branch,
+    });
+  }
+
+  const mainBranch = await prisma.branch.findUniqueOrThrow({ where: { code: "BR-RUH" } });
+  const jeddahBranch = await prisma.branch.findUniqueOrThrow({ where: { code: "BR-JED" } });
+
+  // ربط المستخدمين بالفرع الرئيسي افتراضياً
+  await prisma.user.updateMany({
+    where: { branchId: null },
+    data: { branchId: mainBranch.id },
+  });
+
   // ---- دليل الحسابات ----
-  const accounts: Array<{ code: string; name: string; type: AccountType }> = [
+  // الحسابات الرئيسية أولاً، ثم الفرعية التي تشير إليها عبر parentCode
+  const accounts: Array<{
+    code: string;
+    name: string;
+    type: AccountType;
+    parentCode?: string;
+    cashFlowCategory?: CashFlowCategory;
+  }> = [
     { code: "1000", name: "الأصول", type: AccountType.ASSET },
-    { code: "1100", name: "النقدية وما في حكمها", type: AccountType.ASSET },
-    { code: "1200", name: "الذمم المدينة (العملاء)", type: AccountType.ASSET },
-    { code: "1300", name: "المخزون", type: AccountType.ASSET },
+    { code: "1100", name: "النقدية وما في حكمها", type: AccountType.ASSET, parentCode: "1000", cashFlowCategory: CashFlowCategory.CASH },
+    { code: "1200", name: "الذمم المدينة (العملاء)", type: AccountType.ASSET, parentCode: "1000", cashFlowCategory: CashFlowCategory.OPERATING },
+    { code: "1300", name: "المخزون", type: AccountType.ASSET, parentCode: "1000", cashFlowCategory: CashFlowCategory.OPERATING },
+    { code: "1400", name: "الأصول الثابتة", type: AccountType.ASSET, parentCode: "1000", cashFlowCategory: CashFlowCategory.INVESTING },
     { code: "2000", name: "الخصوم", type: AccountType.LIABILITY },
-    { code: "2100", name: "الذمم الدائنة (الموردون)", type: AccountType.LIABILITY },
-    { code: "2200", name: "ضريبة القيمة المضافة المستحقة", type: AccountType.LIABILITY },
+    { code: "2100", name: "الذمم الدائنة (الموردون)", type: AccountType.LIABILITY, parentCode: "2000", cashFlowCategory: CashFlowCategory.OPERATING },
+    { code: "2200", name: "ضريبة القيمة المضافة المستحقة", type: AccountType.LIABILITY, parentCode: "2000", cashFlowCategory: CashFlowCategory.OPERATING },
+    { code: "2300", name: "قروض طويلة الأجل", type: AccountType.LIABILITY, parentCode: "2000", cashFlowCategory: CashFlowCategory.FINANCING },
     { code: "3000", name: "حقوق الملكية", type: AccountType.EQUITY },
-    { code: "3100", name: "رأس المال", type: AccountType.EQUITY },
+    { code: "3100", name: "رأس المال", type: AccountType.EQUITY, parentCode: "3000", cashFlowCategory: CashFlowCategory.FINANCING },
     { code: "4000", name: "الإيرادات", type: AccountType.REVENUE },
-    { code: "4100", name: "إيرادات المبيعات", type: AccountType.REVENUE },
+    { code: "4100", name: "إيرادات المبيعات", type: AccountType.REVENUE, parentCode: "4000", cashFlowCategory: CashFlowCategory.OPERATING },
+    { code: "4200", name: "أرباح فروقات العملة", type: AccountType.REVENUE, parentCode: "4000", cashFlowCategory: CashFlowCategory.OPERATING },
     { code: "5000", name: "المصروفات", type: AccountType.EXPENSE },
-    { code: "5100", name: "تكلفة البضاعة المباعة", type: AccountType.EXPENSE },
-    { code: "5200", name: "الرواتب والأجور", type: AccountType.EXPENSE },
-    { code: "5300", name: "مصروفات عمومية وإدارية", type: AccountType.EXPENSE },
+    { code: "5100", name: "تكلفة البضاعة المباعة", type: AccountType.EXPENSE, parentCode: "5000", cashFlowCategory: CashFlowCategory.OPERATING },
+    { code: "5200", name: "الرواتب والأجور", type: AccountType.EXPENSE, parentCode: "5000", cashFlowCategory: CashFlowCategory.OPERATING },
+    { code: "5300", name: "مصروفات عمومية وإدارية", type: AccountType.EXPENSE, parentCode: "5000", cashFlowCategory: CashFlowCategory.OPERATING },
+    { code: "5400", name: "خسائر فروقات العملة", type: AccountType.EXPENSE, parentCode: "5000", cashFlowCategory: CashFlowCategory.OPERATING },
   ];
 
-  for (const account of accounts) {
+  for (const { parentCode, ...account } of accounts) {
+    const parent = parentCode
+      ? await prisma.chartOfAccount.findUnique({ where: { code: parentCode } })
+      : null;
+
     await prisma.chartOfAccount.upsert({
       where: { code: account.code },
-      update: { name: account.name, type: account.type },
-      create: account,
+      update: {
+        name: account.name,
+        type: account.type,
+        parentId: parent?.id ?? null,
+        cashFlowCategory: account.cashFlowCategory ?? null,
+      },
+      create: { ...account, parentId: parent?.id ?? null },
     });
   }
 
@@ -118,13 +188,13 @@ async function main() {
   }
 
   const warehouses = [
-    { code: "WH-MAIN", name: "المستودع الرئيسي", location: "الرياض - الصناعية" },
-    { code: "WH-JED", name: "مستودع جدة", location: "جدة - حي الخمرة" },
+    { code: "WH-MAIN", name: "المستودع الرئيسي", location: "الرياض - الصناعية", branchId: mainBranch.id },
+    { code: "WH-JED", name: "مستودع جدة", location: "جدة - حي الخمرة", branchId: jeddahBranch.id },
   ];
   for (const warehouse of warehouses) {
     await prisma.warehouse.upsert({
       where: { code: warehouse.code },
-      update: {},
+      update: { branchId: warehouse.branchId },
       create: warehouse,
     });
   }
@@ -233,8 +303,8 @@ async function main() {
   for (const employee of employees) {
     await prisma.employee.upsert({
       where: { employeeNo: employee.employeeNo },
-      update: {},
-      create: employee,
+      update: { branchId: mainBranch.id },
+      create: { ...employee, branchId: mainBranch.id },
     });
   }
 
@@ -273,8 +343,8 @@ async function main() {
     ],
     transitions: [
       { from: "DRAFT", to: "PENDING_APPROVAL", label: "إرسال للاعتماد", roles: [Role.SALES] },
-      // الطلبات التي تتجاوز 20,000 تحتاج اعتماد المدير فقط
-      { from: "PENDING_APPROVAL", to: "CONFIRMED", label: "تأكيد الطلب", roles: [Role.SALES] },
+      // الطلبات حتى 20,000 يؤكدها مندوب المبيعات، وما فوقها للمدير وحده
+      { from: "PENDING_APPROVAL", to: "CONFIRMED", label: "تأكيد الطلب", roles: [Role.SALES], maxAmount: 20000 },
       { from: "PENDING_APPROVAL", to: "CONFIRMED", label: "تأكيد طلب كبير (مدير)", roles: [Role.ADMIN], minAmount: 20000 },
       { from: "PENDING_APPROVAL", to: "DRAFT", label: "إرجاع للمسودة", roles: [Role.ADMIN, Role.SALES], requiresNote: true },
       { from: "CONFIRMED", to: "INVOICED", label: "إصدار فاتورة", roles: [Role.SALES, Role.ACCOUNTANT] },
@@ -300,6 +370,58 @@ async function main() {
     ],
   });
 
+  // ---- قيود تجريبية تُظهر قائمة التدفقات النقدية بأنشطتها الثلاثة ----
+  // تُنشأ مرة واحدة فقط على دفاتر خالية حتى لا تتكرر مع كل تعبئة.
+  if ((await prisma.journalEntry.count()) === 0) {
+    const admin = await prisma.user.findUniqueOrThrow({
+      where: { email: "admin@erp.local" },
+    });
+    const entryDate = new Date(Date.UTC(new Date().getFullYear(), 2, 1));
+
+    const demoEntries: Array<{
+      description: string;
+      lines: Array<{ code: string; debit?: number; credit?: number }>;
+    }> = [
+      { description: "رأس مال نقدي", lines: [{ code: "1100", debit: 200000 }, { code: "3100", credit: 200000 }] },
+      { description: "قرض بنكي طويل الأجل", lines: [{ code: "1100", debit: 50000 }, { code: "2300", credit: 50000 }] },
+      { description: "شراء أصل ثابت نقداً", lines: [{ code: "1400", debit: 80000 }, { code: "1100", credit: 80000 }] },
+      { description: "مبيعات آجلة", lines: [{ code: "1200", debit: 57500 }, { code: "4100", credit: 50000 }, { code: "2200", credit: 7500 }] },
+      { description: "تحصيل من عملاء", lines: [{ code: "1100", debit: 40000 }, { code: "1200", credit: 40000 }] },
+      { description: "شراء مخزون آجل", lines: [{ code: "1300", debit: 30000 }, { code: "2100", credit: 30000 }] },
+      { description: "سداد موردين", lines: [{ code: "2100", debit: 18000 }, { code: "1100", credit: 18000 }] },
+      { description: "رواتب نقداً", lines: [{ code: "5200", debit: 22000 }, { code: "1100", credit: 22000 }] },
+      { description: "مصروفات إدارية نقداً", lines: [{ code: "5300", debit: 6000 }, { code: "1100", credit: 6000 }] },
+      { description: "سداد قسط قرض", lines: [{ code: "2300", debit: 10000 }, { code: "1100", credit: 10000 }] },
+    ];
+
+    const accountByCode = new Map(
+      (await prisma.chartOfAccount.findMany({ select: { id: true, code: true } })).map(
+        (account) => [account.code, account.id],
+      ),
+    );
+
+    for (const [index, entry] of demoEntries.entries()) {
+      await prisma.journalEntry.create({
+        data: {
+          number: `JV-${entryDate.getFullYear()}-${String(index + 1).padStart(4, "0")}`,
+          description: entry.description,
+          entryDate,
+          status: "POSTED",
+          sourceType: "MANUAL",
+          createdById: admin.id,
+          branchId: mainBranch.id,
+          lines: {
+            create: entry.lines.map((line) => ({
+              accountId: accountByCode.get(line.code)!,
+              debit: line.debit ?? 0,
+              credit: line.credit ?? 0,
+            })),
+          },
+        },
+      });
+    }
+  }
+
   console.log("✅ اكتملت تعبئة البيانات التجريبية");
   console.log("   بيانات الدخول: admin@erp.local / Admin@123");
 }
@@ -318,6 +440,7 @@ type SeedTransition = {
   label: string;
   roles: Role[];
   minAmount?: number;
+  maxAmount?: number;
   requiresNote?: boolean;
 };
 
@@ -367,6 +490,7 @@ async function seedWorkflow(input: {
         label: transition.label,
         allowedRoles: transition.roles,
         minAmount: transition.minAmount ?? null,
+        maxAmount: transition.maxAmount ?? null,
         requiresNote: transition.requiresNote ?? false,
         sortOrder: index,
       },

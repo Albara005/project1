@@ -30,7 +30,7 @@ export default async function DashboardLayout({
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center justify-between gap-3 border-b border-border bg-card px-4 py-3 lg:px-8">
+        <header className="flex items-center justify-between gap-3 border-b border-border bg-card px-4 py-3 lg:px-8 print:hidden">
           <div className="ps-12 lg:ps-0">
             <p className="text-sm font-medium">{user.name}</p>
             <p className="text-xs text-muted-foreground">{ROLE_LABELS[user.role]}</p>
@@ -42,7 +42,7 @@ export default async function DashboardLayout({
           </form>
         </header>
 
-        <main className="flex-1 p-4 lg:p-8">{children}</main>
+        <main className="flex-1 p-4 lg:p-8 print:p-0">{children}</main>
       </div>
     </div>
   );

@@ -25,6 +25,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/dashboard/stock", label: "أرصدة وحركات المخزون", module: "inventory" },
       { href: "/dashboard/suppliers", label: "الموردون", module: "purchasing" },
       { href: "/dashboard/purchase-orders", label: "أوامر الشراء", module: "purchasing" },
+      { href: "/dashboard/returns?type=PURCHASE", label: "مرتجعات المشتريات", module: "purchasing" },
     ],
   },
   {
@@ -35,6 +36,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/dashboard/sales-orders", label: "أوامر البيع", module: "sales" },
       { href: "/dashboard/invoices", label: "الفواتير", module: "sales" },
       { href: "/dashboard/payments", label: "المدفوعات", module: "sales" },
+      { href: "/dashboard/returns?type=SALES", label: "مرتجعات المبيعات", module: "sales" },
     ],
   },
   {
@@ -43,6 +45,8 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/dashboard/accounts", label: "دليل الحسابات", module: "accounting" },
       { href: "/dashboard/journal", label: "القيود المحاسبية", module: "accounting" },
       { href: "/dashboard/reports", label: "التقارير المالية", module: "accounting" },
+      { href: "/dashboard/reports/cash-flow", label: "التدفقات النقدية", module: "accounting" },
+      { href: "/dashboard/einvoicing", label: "الفوترة الإلكترونية", module: "accounting" },
     ],
   },
   {
@@ -58,6 +62,8 @@ export const NAV_GROUPS: NavGroup[] = [
     title: "الإعدادات",
     items: [
       { href: "/dashboard/workflows", label: "سير العمل الديناميكي", module: "workflows" },
+      { href: "/dashboard/branches", label: "الفروع", module: "settings" },
+      { href: "/dashboard/currencies", label: "العملات وأسعار الصرف", module: "settings" },
       { href: "/dashboard/users", label: "المستخدمون", module: "settings" },
       { href: "/dashboard/settings", label: "إعدادات المنشأة", module: "settings" },
     ],
