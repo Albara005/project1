@@ -1,0 +1,23 @@
+# قاعدة بيانات التطوير المحلية.
+# البيانات هنا مطابقة لـ DATABASE_URL في .env.example، فلا تحتاج تعديل أي شيء.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: erp-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: erp
+      POSTGRES_PASSWORD: erp_dev_password
+      POSTGRES_DB: erp_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - erp-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U erp -d erp_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  erp-pgdata:

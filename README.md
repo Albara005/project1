@@ -16,28 +16,35 @@
 
 ## التشغيل محلياً
 
-المتطلبات: Node.js 20+ وPostgreSQL 16.
+المتطلبات: **Node.js 20+** و**Docker Desktop** (لقاعدة البيانات).
 
 ```bash
-# 1) تثبيت الاعتماديات
-npm install --legacy-peer-deps
+git clone https://github.com/Albara005/project1.git
+cd project1
 
-# 2) إعداد متغيرات البيئة
-cp .env.example .env
-#    عدّل DATABASE_URL ليشير لقاعدة بياناتك، وضع قيمة عشوائية طويلة في AUTH_SECRET
-
-# 3) إنشاء الجداول وتعبئة بيانات تجريبية
-npx prisma migrate dev
-npx prisma db seed
-
-# 4) التشغيل
-npm run dev
+npm install --legacy-peer-deps   # 1) الاعتماديات
+npm run db:up                    # 2) تشغيل PostgreSQL في حاوية
+npm run setup                    # 3) البيئة + الجداول + بيانات تجريبية
+npm run dev                      # 4) التشغيل
 ```
 
 ثم افتح <http://localhost:3000>.
 
+`npm run setup` ينشئ `.env` ويولّد `AUTH_SECRET` عشوائياً وينتظر قاعدة البيانات
+ثم يطبّق الهجرات ويعبّئ البيانات التجريبية. آمن للتكرار.
+
 > ملاحظة: `--legacy-peer-deps` ضرورية بسبب خلل في إصدار npm الحالي عند حل شجرة
 > اعتماديات Prisma، وليست متطلباً للمشروع نفسه.
+
+### بدون Docker
+
+إن كان لديك PostgreSQL مثبّتاً، تجاوز `npm run db:up` وأنشئ قاعدة البيانات
+يدوياً، ثم عدّل `DATABASE_URL` في `.env` قبل تشغيل `npm run setup`:
+
+```sql
+CREATE USER erp WITH PASSWORD 'erp_dev_password';
+CREATE DATABASE erp_db OWNER erp;
+```
 
 ### حسابات الدخول التجريبية
 
@@ -204,8 +211,12 @@ src/
 ## الأوامر
 
 ```bash
-npm run dev      # تشغيل بيئة التطوير
-npm run build    # بناء للإنتاج
-npm run lint     # فحص الكود
-npx tsc --noEmit # فحص الأنواع
+npm run setup     # تهيئة البيئة والجداول والبيانات التجريبية
+npm run db:up     # تشغيل قاعدة البيانات (Docker)
+npm run db:down   # إيقافها
+npm run db:studio # تصفّح قاعدة البيانات في المتصفح
+npm run dev       # تشغيل بيئة التطوير
+npm run build     # بناء للإنتاج
+npm run lint      # فحص الكود
+npx tsc --noEmit  # فحص الأنواع
 ```
