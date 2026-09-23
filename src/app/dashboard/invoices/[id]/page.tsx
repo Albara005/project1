@@ -30,6 +30,7 @@ import {
 } from "../labels";
 import { CurrencyNote, Money, baseValue } from "../document-money";
 import { PaymentForm } from "../payment-form";
+import { IssueEInvoiceButton } from "../../einvoicing/row-actions";
 
 export default async function InvoiceDetailPage({
   params,
@@ -91,6 +92,9 @@ export default async function InvoiceDetailPage({
                 تسجيل مرتجع
               </Button>
             </Link>
+            {invoice.type === "SALES" ? (
+              <IssueEInvoiceButton invoiceId={invoice.id} />
+            ) : null}
           </div>
         }
       />
