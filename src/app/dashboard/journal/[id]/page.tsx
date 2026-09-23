@@ -43,6 +43,7 @@ export default async function JournalEntryPage({
     where: { id },
     include: {
       createdBy: { select: { name: true } },
+      branch: { select: { code: true, name: true } },
       invoice: { select: { id: true, number: true } },
       purchaseOrder: { select: { id: true, number: true } },
       salesOrder: { select: { id: true, number: true } },
@@ -108,6 +109,19 @@ export default async function JournalEntryPage({
         <Badge tone={ENTRY_STATUS_TONES[entry.status]}>
           {ENTRY_STATUS_LABELS[entry.status]}
         </Badge>
+      ),
+    },
+    {
+      label: "الفرع",
+      value: entry.branch ? (
+        <span className="flex flex-wrap items-center gap-2">
+          {entry.branch.name}
+          <span dir="ltr" className="font-mono text-xs text-muted-foreground">
+            {entry.branch.code}
+          </span>
+        </span>
+      ) : (
+        <span className="text-muted-foreground">غير محدد</span>
       ),
     },
     { label: "أنشأه", value: entry.createdBy?.name ?? "—" },

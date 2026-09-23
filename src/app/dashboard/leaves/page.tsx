@@ -18,6 +18,7 @@ import {
   THead,
   TR,
 } from "@/components/ui";
+import { getBranchScope, resolveBranchFilter } from "@/app/dashboard/employees/branch-scope";
 import { LeaveForm } from "./leave-form";
 import { LEAVE_STATUS_LABELS, LEAVE_STATUS_TONES, LEAVE_TYPE_LABELS } from "./labels";
 
@@ -33,30 +34,54 @@ function isLeaveStatus(value: string): value is LeaveStatus {
   return value in LEAVE_STATUS_LABELS;
 }
 
+/** يبني رابط تصفية يحافظ على بقية المعايير المختارة. */
+function filterHref({ status, branch }: { status?: string; branch?: string }) {
+  const params = new URLSearchParams();
+  if (status) params.set("status", status);
+  if (branch) params.set("branch", branch);
+  const query = params.toString();
+  return query ? `/dashboard/leaves?${query}` : "/dashboard/leaves";
+}
+
 export default async function LeavesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string }>;
+  searchParams: Promise<{ status?: string; branch?: string }>;
 }) {
-  await requireModule("hr");
+  const user = await requireModule("hr");
 
-  const { status } = await searchParams;
+  const { status, branch } = await searchParams;
   const selected = (status ?? "").trim();
 
-  const where: Prisma.LeaveRequestWhereInput = isLeaveStatus(selected)
-    ? { status: selected }
-    : {};
+  const scope = await getBranchScope(user);
+  const branchFilter = resolveBranchFilter(scope, branch);
+  const selectedBranch = scope.canChooseBranch ? branchFilter : null;
+
+  const where: Prisma.LeaveRequestWhereInput = {
+    ...(isLeaveStatus(selected) ? { status: selected } : {}),
+    ...(branchFilter ? { employee: { branchId: branchFilter } } : {}),
+  };
 
   const [requests, employees] = await Promise.all([
     prisma.leaveRequest.findMany({
       where,
       orderBy: { createdAt: "desc" },
       include: {
-        employee: { select: { firstName: true, lastName: true, employeeNo: true } },
+        employee: {
+          select: {
+            firstName: true,
+            lastName: true,
+            employeeNo: true,
+            branch: { select: { name: true, code: true } },
+          },
+        },
       },
     }),
     prisma.employee.findMany({
-      where: { status: { not: "TERMINATED" } },
+      where: {
+        status: { not: "TERMINATED" },
+        ...(scope.restrictToBranchId ? { branchId: scope.restrictToBranchId } : {}),
+      },
       orderBy: { employeeNo: "asc" },
       select: { id: true, firstName: true, lastName: true, employeeNo: true },
     }),
@@ -95,7 +120,7 @@ export default async function LeavesPage({
           return (
             <Link
               key={filter.key || "all"}
-              href={filter.key ? `/dashboard/leaves?status=${filter.key}` : "/dashboard/leaves"}
+              href={filterHref({ status: filter.key, branch: selectedBranch ?? undefined })}
               className={
                 isActive
                   ? "rounded-full bg-primary px-3 py-1 text-xs font-medium text-primary-foreground"
@@ -108,6 +133,35 @@ export default async function LeavesPage({
         })}
       </div>
 
+      {scope.canChooseBranch && scope.branches.length > 0 ? (
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">الفرع:</span>
+          <Link
+            href={filterHref({ status: selected || undefined })}
+            className={
+              selectedBranch === null
+                ? "rounded-full bg-primary px-3 py-1 text-xs font-medium text-primary-foreground"
+                : "rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground hover:bg-muted/70"
+            }
+          >
+            كل الفروع
+          </Link>
+          {scope.branches.map((item) => (
+            <Link
+              key={item.id}
+              href={filterHref({ status: selected || undefined, branch: item.id })}
+              className={
+                selectedBranch === item.id
+                  ? "rounded-full bg-primary px-3 py-1 text-xs font-medium text-primary-foreground"
+                  : "rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground hover:bg-muted/70"
+              }
+            >
+              {item.name}
+            </Link>
+          ))}
+        </div>
+      ) : null}
+
       {requests.length === 0 ? (
         <EmptyState
           title="لا توجد طلبات إجازة"
@@ -119,6 +173,7 @@ export default async function LeavesPage({
             <THead>
               <TR>
                 <TH>الموظف</TH>
+                <TH>الفرع</TH>
                 <TH>النوع</TH>
                 <TH>من</TH>
                 <TH>إلى</TH>
@@ -140,6 +195,13 @@ export default async function LeavesPage({
                     <p className="font-mono text-xs text-muted-foreground">
                       {request.employee.employeeNo}
                     </p>
+                  </TD>
+                  <TD>
+                    {request.employee.branch ? (
+                      <Badge tone="purple">{request.employee.branch.name}</Badge>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
                   </TD>
                   <TD>{LEAVE_TYPE_LABELS[request.type]}</TD>
                   <TD>{formatDate(request.startDate)}</TD>

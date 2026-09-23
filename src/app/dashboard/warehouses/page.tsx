@@ -16,6 +16,7 @@ import {
   TR,
   Table,
 } from "@/components/ui";
+import { getBranchScope, listBranchOptions } from "./branch-scope";
 import { WarehouseForm } from "./warehouse-form";
 import { toggleWarehouseActive } from "./actions";
 
@@ -24,20 +25,30 @@ export default async function WarehousesPage({
 }: {
   searchParams: Promise<{ edit?: string }>;
 }) {
-  await requireModule("inventory");
+  const user = await requireModule("inventory");
   const { edit } = await searchParams;
 
-  const warehouses = await prisma.warehouse.findMany({
-    orderBy: { code: "asc" },
-    select: {
-      id: true,
-      code: true,
-      name: true,
-      location: true,
-      isActive: true,
-      stockItems: { select: { quantity: true } },
-    },
-  });
+  const scope = await getBranchScope(user);
+
+  const [warehouses, branches] = await Promise.all([
+    prisma.warehouse.findMany({
+      where: scope.restrictToBranchId
+        ? { branchId: scope.restrictToBranchId }
+        : {},
+      orderBy: { code: "asc" },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        location: true,
+        isActive: true,
+        branchId: true,
+        branch: { select: { code: true, name: true } },
+        stockItems: { select: { quantity: true } },
+      },
+    }),
+    listBranchOptions(scope),
+  ]);
 
   const editing = edit ? warehouses.find((warehouse) => warehouse.id === edit) : undefined;
 

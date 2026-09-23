@@ -3,7 +3,8 @@ import { notFound } from "next/navigation";
 import { WorkflowEntityType } from "@/generated/prisma";
 import { prisma } from "@/lib/db";
 import { requireModule } from "@/lib/session";
-import { formatCurrency, formatDate, formatNumber, toNumber } from "@/lib/utils";
+import { formatDate, formatNumber, toNumber } from "@/lib/utils";
+import { formatMoney, getBaseCurrency } from "@/lib/modules/currency";
 import { getWorkflowHistory, getWorkflowSnapshot } from "@/lib/workflow";
 import { WorkflowPanel } from "@/components/workflow-panel";
 import {
@@ -20,6 +21,7 @@ import {
   THead,
   TR,
 } from "@/components/ui";
+import { CurrencyNote, Money } from "../../invoices/document-money";
 import { runSalesOrderTransition } from "../actions";
 import { SALES_ORDER_STATUS_LABELS, SALES_ORDER_STATUS_TONES } from "../status";
 
@@ -36,19 +38,34 @@ export default async function SalesOrderDetailPage({
     include: {
       customer: { select: { id: true, code: true, name: true } },
       warehouse: { select: { name: true, code: true } },
+      branch: { select: { code: true, name: true } },
+      currency: { select: { code: true, decimals: true } },
       items: { include: { product: { select: { name: true, sku: true, unit: true } } } },
       invoices: {
-        select: { id: true, number: true, total: true, issueDate: true, status: true },
+        select: {
+          id: true,
+          number: true,
+          total: true,
+          baseTotal: true,
+          exchangeRate: true,
+          issueDate: true,
+          status: true,
+          currency: { select: { code: true, decimals: true } },
+        },
       },
     },
   });
 
   if (!order) notFound();
 
-  const [snapshot, history] = await Promise.all([
+  const [snapshot, history, baseCurrency] = await Promise.all([
     getWorkflowSnapshot(WorkflowEntityType.SALES_ORDER, order.id, user.role),
     getWorkflowHistory(WorkflowEntityType.SALES_ORDER, order.id),
+    getBaseCurrency(),
   ]);
+
+  // عملة المستند تُستخدم للعرض، وأعمدة الأساس هي ما رُحِّل به القيد
+  const documentCurrency = order.currency ?? baseCurrency;
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -85,6 +102,24 @@ export default async function SalesOrderDetailPage({
                   <dt className="text-muted-foreground">المستودع</dt>
                   <dd className="font-medium">
                     {order.warehouse.code} — {order.warehouse.name}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">الفرع</dt>
+                  <dd className="font-medium">
+                    {order.branch
+                      ? `${order.branch.code} — ${order.branch.name}`
+                      : "—"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">العملة</dt>
+                  <dd className="font-medium">
+                    <CurrencyNote
+                      currency={order.currency}
+                      exchangeRate={order.exchangeRate}
+                      baseCurrency={baseCurrency}
+                    />
                   </dd>
                 </div>
                 <div>
@@ -134,10 +169,10 @@ export default async function SalesOrderDetailPage({
                       <TD>
                         {formatNumber(toNumber(item.quantity), 3)} {item.product.unit}
                       </TD>
-                      <TD>{formatCurrency(toNumber(item.unitPrice))}</TD>
+                      <TD>{formatMoney(toNumber(item.unitPrice), documentCurrency)}</TD>
                       <TD>{formatNumber(toNumber(item.taxRate), 2)}%</TD>
                       <TD className="font-medium">
-                        {formatCurrency(toNumber(item.lineTotal))}
+                        {formatMoney(toNumber(item.lineTotal), documentCurrency)}
                       </TD>
                     </TR>
                   ))}
@@ -147,15 +182,39 @@ export default async function SalesOrderDetailPage({
               <div className="space-y-1 border-t border-border p-4 text-sm">
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">المجموع قبل الضريبة</span>
-                  <span>{formatCurrency(toNumber(order.subtotal))}</span>
+                  <span className="text-end">
+                    <Money
+                      amount={toNumber(order.subtotal)}
+                      currency={order.currency}
+                      storedBase={order.baseSubtotal}
+                      exchangeRate={order.exchangeRate}
+                      baseCurrency={baseCurrency}
+                    />
+                  </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">الضريبة</span>
-                  <span>{formatCurrency(toNumber(order.taxAmount))}</span>
+                  <span className="text-end">
+                    <Money
+                      amount={toNumber(order.taxAmount)}
+                      currency={order.currency}
+                      storedBase={order.baseTaxAmount}
+                      exchangeRate={order.exchangeRate}
+                      baseCurrency={baseCurrency}
+                    />
+                  </span>
                 </div>
                 <div className="flex justify-between text-base font-bold">
                   <span>الإجمالي</span>
-                  <span>{formatCurrency(toNumber(order.total))}</span>
+                  <span className="text-end">
+                    <Money
+                      amount={toNumber(order.total)}
+                      currency={order.currency}
+                      storedBase={order.baseTotal}
+                      exchangeRate={order.exchangeRate}
+                      baseCurrency={baseCurrency}
+                    />
+                  </span>
                 </div>
               </div>
             </CardContent>
@@ -186,8 +245,14 @@ export default async function SalesOrderDetailPage({
                       <span className="text-sm text-muted-foreground">
                         {formatDate(invoice.issueDate)}
                       </span>
-                      <span className="text-sm font-medium">
-                        {formatCurrency(toNumber(invoice.total))}
+                      <span className="text-sm font-medium text-end">
+                        <Money
+                          amount={toNumber(invoice.total)}
+                          currency={invoice.currency}
+                          storedBase={invoice.baseTotal}
+                          exchangeRate={invoice.exchangeRate}
+                          baseCurrency={baseCurrency}
+                        />
                       </span>
                     </li>
                   ))}

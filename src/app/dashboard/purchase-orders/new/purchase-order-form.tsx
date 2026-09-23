@@ -222,6 +222,53 @@ export function PurchaseOrderForm({
           </div>
 
           <div>
+            <Label htmlFor="currencyId">عملة الأمر</Label>
+            <Select
+              id="currencyId"
+              name="currencyId"
+              required
+              value={currencyId}
+              onChange={(event) => setCurrencyId(event.target.value)}
+            >
+              {currencies.map((currency) => (
+                <option key={currency.id} value={currency.id}>
+                  {currency.code} — {currency.name}
+                  {currency.isBase ? " (عملة الأساس)" : ""}
+                </option>
+              ))}
+            </Select>
+            {showBaseEquivalent ? (
+              <p className="pt-1 text-xs text-muted-foreground">
+                {rate == null
+                  ? "لا يوجد سعر صرف سارٍ لهذه العملة، لن يُقبل الحفظ بها."
+                  : `سعر الصرف اليوم: 1 ${currencyCode} = ${money(rate)} ${baseCurrencyCode}`}
+              </p>
+            ) : null}
+          </div>
+
+          <div>
+            <Label htmlFor="branchId">الفرع</Label>
+            <Select
+              id="branchId"
+              name="branchId"
+              defaultValue={defaultBranchId}
+              disabled={!canChooseBranch}
+            >
+              {canChooseBranch ? <option value="">بدون فرع</option> : null}
+              {branches.map((branch) => (
+                <option key={branch.id} value={branch.id}>
+                  {branch.code} — {branch.name}
+                </option>
+              ))}
+            </Select>
+            {!canChooseBranch ? (
+              <p className="pt-1 text-xs text-muted-foreground">
+                يُسجَّل الأمر على فرعك تلقائياً.
+              </p>
+            ) : null}
+          </div>
+
+          <div>
             <Label htmlFor="expectedDate">تاريخ الاستلام المتوقع</Label>
             <Input id="expectedDate" name="expectedDate" type="date" dir="ltr" />
           </div>
@@ -316,7 +363,9 @@ export function PurchaseOrderForm({
                   <div className="flex items-center justify-between gap-2 md:col-span-2">
                     <div>
                       <p className="text-xs text-muted-foreground">إجمالي البند</p>
-                      <p className="text-sm font-medium">{money(totals?.lineTotal ?? 0)}</p>
+                      <p className="text-sm font-medium">
+                        {moneyIn(totals?.lineTotal ?? 0, currencyCode)}
+                      </p>
                     </div>
                     <Button
                       type="button"
@@ -349,18 +398,24 @@ export function PurchaseOrderForm({
           <div className="mt-2 space-y-1 border-t border-border pt-3 text-sm">
             <div className="flex justify-between">
               <span className="text-muted-foreground">الإجمالي قبل الضريبة</span>
-              <span>{money(subtotal)}</span>
+              <span>{moneyIn(subtotal, currencyCode)}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">الضريبة</span>
-              <span>{money(taxAmount)}</span>
+              <span>{moneyIn(taxAmount, currencyCode)}</span>
             </div>
             <div className="flex justify-between text-base font-bold">
               <span>الإجمالي</span>
-              <span>{money(total)}</span>
+              <span>{moneyIn(total, currencyCode)}</span>
             </div>
+            {showBaseEquivalent && rate != null ? (
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span>ما يعادله بعملة الأساس</span>
+                <span>{moneyIn(total * rate, baseCurrencyCode)}</span>
+              </div>
+            ) : null}
             <p className="pt-1 text-xs text-muted-foreground">
-              المجاميع تُحتسب نهائياً في الخادم عند الحفظ.
+              المجاميع وسعر الصرف يُحتسبان نهائياً في الخادم عند الحفظ.
             </p>
           </div>
         </CardContent>

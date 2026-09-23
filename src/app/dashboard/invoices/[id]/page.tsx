@@ -2,7 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { requireModule } from "@/lib/session";
-import { formatCurrency, formatDate, formatNumber, toNumber } from "@/lib/utils";
+import { formatDate, formatNumber, toNumber } from "@/lib/utils";
+import { formatMoney, getBaseCurrency } from "@/lib/modules/currency";
 import {
   Badge,
   Button,
@@ -27,6 +28,7 @@ import {
   INVOICE_STATUS_TONES,
   INVOICE_TYPE_LABELS,
 } from "../labels";
+import { CurrencyNote, Money, baseValue } from "../document-money";
 import { PaymentForm } from "../payment-form";
 
 export default async function InvoiceDetailPage({
@@ -37,22 +39,34 @@ export default async function InvoiceDetailPage({
   await requireModule("sales");
   const { id } = await params;
 
-  const invoice = await prisma.invoice.findUnique({
-    where: { id },
-    include: {
-      customer: { select: { id: true, code: true, name: true } },
-      supplier: { select: { id: true, code: true, name: true } },
-      salesOrder: { select: { id: true, number: true } },
-      items: { orderBy: { description: "asc" } },
-      payments: { orderBy: { paidAt: "desc" } },
-    },
-  });
+  const [invoice, baseCurrency] = await Promise.all([
+    prisma.invoice.findUnique({
+      where: { id },
+      include: {
+        customer: { select: { id: true, code: true, name: true } },
+        supplier: { select: { id: true, code: true, name: true } },
+        salesOrder: { select: { id: true, number: true } },
+        branch: { select: { code: true, name: true } },
+        currency: { select: { code: true, decimals: true } },
+        items: { orderBy: { description: "asc" } },
+        payments: {
+          orderBy: { paidAt: "desc" },
+          include: { currency: { select: { code: true, decimals: true } } },
+        },
+      },
+    }),
+    getBaseCurrency(),
+  ]);
 
   if (!invoice) notFound();
 
+  // كل مبالغ الفاتورة معروضة بعملتها، والمعادل بعملة الأساس أسفلها عند الاختلاف
+  const documentCurrency = invoice.currency ?? baseCurrency;
   const total = toNumber(invoice.total);
   const paid = toNumber(invoice.paidAmount);
   const remaining = Math.max(0, Math.round((total - paid + Number.EPSILON) * 100) / 100);
+  const baseTotal = baseValue(total, invoice.baseTotal, invoice.exchangeRate);
+  const basePaid = baseValue(paid, 0, invoice.exchangeRate);
   const party = invoice.customer ?? invoice.supplier;
   const today = new Date().toISOString().slice(0, 10);
   const canPay = invoice.status !== "CANCELLED" && invoice.status !== "DRAFT";
@@ -122,6 +136,24 @@ export default async function InvoiceDetailPage({
                   </dd>
                 </div>
                 <div>
+                  <dt className="text-muted-foreground">الفرع</dt>
+                  <dd className="font-medium">
+                    {invoice.branch
+                      ? `${invoice.branch.code} — ${invoice.branch.name}`
+                      : "—"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">العملة</dt>
+                  <dd className="font-medium">
+                    <CurrencyNote
+                      currency={invoice.currency}
+                      exchangeRate={invoice.exchangeRate}
+                      baseCurrency={baseCurrency}
+                    />
+                  </dd>
+                </div>
+                <div>
                   <dt className="text-muted-foreground">تاريخ الإصدار</dt>
                   <dd className="font-medium">{formatDate(invoice.issueDate)}</dd>
                 </div>
@@ -162,10 +194,12 @@ export default async function InvoiceDetailPage({
                       <TR key={item.id}>
                         <TD className="font-medium">{item.description}</TD>
                         <TD>{formatNumber(toNumber(item.quantity), 3)}</TD>
-                        <TD>{formatCurrency(toNumber(item.unitPrice))}</TD>
+                        <TD>
+                          {formatMoney(toNumber(item.unitPrice), documentCurrency)}
+                        </TD>
                         <TD>{formatNumber(toNumber(item.taxRate), 2)}%</TD>
                         <TD className="font-medium">
-                          {formatCurrency(toNumber(item.lineTotal))}
+                          {formatMoney(toNumber(item.lineTotal), documentCurrency)}
                         </TD>
                       </TR>
                     ))}
@@ -176,23 +210,63 @@ export default async function InvoiceDetailPage({
               <div className="space-y-1 border-t border-border p-4 text-sm">
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">المجموع قبل الضريبة</span>
-                  <span>{formatCurrency(toNumber(invoice.subtotal))}</span>
+                  <span className="text-end">
+                    <Money
+                      amount={toNumber(invoice.subtotal)}
+                      currency={invoice.currency}
+                      storedBase={invoice.baseSubtotal}
+                      exchangeRate={invoice.exchangeRate}
+                      baseCurrency={baseCurrency}
+                    />
+                  </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">الضريبة</span>
-                  <span>{formatCurrency(toNumber(invoice.taxAmount))}</span>
+                  <span className="text-end">
+                    <Money
+                      amount={toNumber(invoice.taxAmount)}
+                      currency={invoice.currency}
+                      storedBase={invoice.baseTaxAmount}
+                      exchangeRate={invoice.exchangeRate}
+                      baseCurrency={baseCurrency}
+                    />
+                  </span>
                 </div>
                 <div className="flex justify-between text-base font-bold">
                   <span>الإجمالي</span>
-                  <span>{formatCurrency(total)}</span>
+                  <span className="text-end">
+                    <Money
+                      amount={total}
+                      currency={invoice.currency}
+                      storedBase={invoice.baseTotal}
+                      exchangeRate={invoice.exchangeRate}
+                      baseCurrency={baseCurrency}
+                    />
+                  </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">المدفوع</span>
-                  <span>{formatCurrency(paid)}</span>
+                  <span className="text-end">
+                    <Money
+                      amount={paid}
+                      currency={invoice.currency}
+                      storedBase={basePaid}
+                      exchangeRate={invoice.exchangeRate}
+                      baseCurrency={baseCurrency}
+                    />
+                  </span>
                 </div>
                 <div className="flex justify-between font-medium">
                   <span>المتبقي</span>
-                  <span>{formatCurrency(remaining)}</span>
+                  <span className="text-end">
+                    <Money
+                      amount={remaining}
+                      currency={invoice.currency}
+                      storedBase={baseTotal - basePaid}
+                      exchangeRate={invoice.exchangeRate}
+                      baseCurrency={baseCurrency}
+                    />
+                  </span>
                 </div>
               </div>
             </CardContent>
@@ -216,6 +290,7 @@ export default async function InvoiceDetailPage({
                       <TH>الطريقة</TH>
                       <TH>التاريخ</TH>
                       <TH>المرجع</TH>
+                      <TH>سعر الصرف</TH>
                       <TH>المبلغ</TH>
                     </TR>
                   </THead>
@@ -237,8 +312,18 @@ export default async function InvoiceDetailPage({
                         <TD className="text-muted-foreground">
                           {payment.reference ?? "—"}
                         </TD>
-                        <TD className="font-medium">
-                          {formatCurrency(toNumber(payment.amount))}
+                        <TD className="text-muted-foreground" dir="ltr">
+                          {toNumber(payment.exchangeRate) || 1}
+                        </TD>
+                        <TD>
+                          <Money
+                            amount={toNumber(payment.amount)}
+                            currency={payment.currency}
+                            storedBase={payment.baseAmount}
+                            exchangeRate={payment.exchangeRate}
+                            baseCurrency={baseCurrency}
+                            className="font-medium"
+                          />
                         </TD>
                       </TR>
                     ))}
@@ -259,6 +344,7 @@ export default async function InvoiceDetailPage({
                 invoiceId={invoice.id}
                 remaining={remaining}
                 today={today}
+                currencyCode={documentCurrency.code}
               />
             ) : (
               <p className="text-sm text-muted-foreground">

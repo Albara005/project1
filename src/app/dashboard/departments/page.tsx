@@ -30,7 +30,9 @@ import {
 } from "./department-forms";
 
 /** مفتاح مجموعة "بدون فرع" داخل جداول التوزيع. */
-const NO_BRANCH_KEY = "__none__";
+const NO_BRANCH_KEY = "__no_branch__";
+/** مفتاح مجموعة "بدون قسم" داخل جداول التوزيع. */
+const NO_DEPARTMENT_KEY = "__no_department__";
 
 export default async function DepartmentsPage() {
   const user = await requireModule("hr");
@@ -91,7 +93,7 @@ export default async function DepartmentsPage() {
   let totalEmployees = 0;
 
   for (const row of headcounts) {
-    const departmentKey = row.departmentId ?? NO_BRANCH_KEY;
+    const departmentKey = row.departmentId ?? NO_DEPARTMENT_KEY;
     const branchKey = row.branchId ?? NO_BRANCH_KEY;
     const count = row._count._all;
 
@@ -113,7 +115,7 @@ export default async function DepartmentsPage() {
       .map((row) => [row.positionId as string, row._count._all]),
   );
 
-  const unassignedDepartmentTotal = departmentTotals.get(NO_BRANCH_KEY) ?? 0;
+  const unassignedDepartmentTotal = departmentTotals.get(NO_DEPARTMENT_KEY) ?? 0;
 
   return (
     <div>
@@ -124,6 +126,102 @@ export default async function DepartmentsPage() {
           0,
         )} مسمى وظيفي · ${formatNumber(totalEmployees, 0)} موظف موزّع على الأقسام`}
       />
+
+      <Card className="mb-4">
+        <CardHeader>
+          <CardTitle>توزيع الموظفين على الفروع</CardTitle>
+        </CardHeader>
+        <CardContent className="px-0 pb-0">
+          {branchColumns.length === 0 || totalEmployees === 0 ? (
+            <p className="px-5 pb-5 text-sm text-muted-foreground">
+              لا يوجد موظفون مرتبطون بفروع بعد — حدّد فرع كل موظف من صفحة الموظفين.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <THead>
+                  <TR>
+                    <TH>القسم</TH>
+                    {branchColumns.map((column) => (
+                      <TH key={column.key}>{column.name}</TH>
+                    ))}
+                    <TH>الإجمالي</TH>
+                  </TR>
+                </THead>
+                <TBody>
+                  {departments.map((department) => {
+                    const cells = byDepartment.get(department.id);
+                    const total = departmentTotals.get(department.id) ?? 0;
+                    return (
+                      <TR key={department.id}>
+                        <TD className="font-medium">
+                          {department.name}
+                          <p className="font-mono text-xs text-muted-foreground">
+                            {department.code}
+                          </p>
+                        </TD>
+                        {branchColumns.map((column) => {
+                          const count = cells?.get(column.key) ?? 0;
+                          return (
+                            <TD key={column.key}>
+                              {count > 0 ? (
+                                <Link
+                                  href={
+                                    column.key === NO_BRANCH_KEY
+                                      ? "/dashboard/employees"
+                                      : `/dashboard/employees?branch=${column.key}`
+                                  }
+                                  className="hover:underline"
+                                >
+                                  <Badge tone="blue">{formatNumber(count, 0)}</Badge>
+                                </Link>
+                              ) : (
+                                <span className="text-xs text-muted-foreground">—</span>
+                              )}
+                            </TD>
+                          );
+                        })}
+                        <TD className="font-medium">{formatNumber(total, 0)}</TD>
+                      </TR>
+                    );
+                  })}
+
+                  {unassignedDepartmentTotal > 0 ? (
+                    <TR>
+                      <TD className="font-medium text-muted-foreground">بدون قسم</TD>
+                      {branchColumns.map((column) => {
+                        const count = byDepartment.get(NO_DEPARTMENT_KEY)?.get(column.key) ?? 0;
+                        return (
+                          <TD key={column.key}>
+                            {count > 0 ? (
+                              <Badge tone="gray">{formatNumber(count, 0)}</Badge>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
+                          </TD>
+                        );
+                      })}
+                      <TD className="font-medium">
+                        {formatNumber(unassignedDepartmentTotal, 0)}
+                      </TD>
+                    </TR>
+                  ) : null}
+
+                  <TR className="bg-muted/40">
+                    <TD className="font-semibold">الإجمالي</TD>
+                    {branchColumns.map((column) => (
+                      <TD key={column.key} className="font-semibold">
+                        {formatNumber(branchTotals.get(column.key) ?? 0, 0)}
+                      </TD>
+                    ))}
+                    <TD className="font-semibold">{formatNumber(totalEmployees, 0)}</TD>
+                  </TR>
+                </TBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <div className="grid gap-4 xl:grid-cols-2">
         <div className="space-y-4">
@@ -169,8 +267,12 @@ export default async function DepartmentsPage() {
                             href={`/dashboard/employees?q=${encodeURIComponent(department.name)}`}
                             className="hover:underline"
                           >
-                            <Badge tone={department._count.employees > 0 ? "blue" : "gray"}>
-                              {formatNumber(department._count.employees, 0)}
+                            <Badge
+                              tone={
+                                (departmentTotals.get(department.id) ?? 0) > 0 ? "blue" : "gray"
+                              }
+                            >
+                              {formatNumber(departmentTotals.get(department.id) ?? 0, 0)}
                             </Badge>
                           </Link>
                         </TD>
@@ -225,8 +327,12 @@ export default async function DepartmentsPage() {
                         <TD className="font-medium">{position.title}</TD>
                         <TD>{position.department?.name ?? "—"}</TD>
                         <TD>
-                          <Badge tone={position._count.employees > 0 ? "blue" : "gray"}>
-                            {formatNumber(position._count.employees, 0)}
+                          <Badge
+                            tone={
+                              (positionEmployeeCounts.get(position.id) ?? 0) > 0 ? "blue" : "gray"
+                            }
+                          >
+                            {formatNumber(positionEmployeeCounts.get(position.id) ?? 0, 0)}
                           </Badge>
                         </TD>
                         <TD className="text-end">

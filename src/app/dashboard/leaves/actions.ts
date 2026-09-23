@@ -10,6 +10,7 @@ import {
 import { prisma } from "@/lib/db";
 import { requireUserAction } from "@/lib/session";
 import { applyTransition, startWorkflow, WorkflowError } from "@/lib/workflow";
+import { getBranchScope } from "@/app/dashboard/employees/branch-scope";
 import { LEAVE_TYPE_VALUES } from "./labels";
 
 export type ActionState = { error?: string; success?: boolean; message?: string };
@@ -78,9 +79,15 @@ export async function createLeaveRequest(
 
   const employee = await prisma.employee.findUnique({
     where: { id: employeeId },
-    select: { id: true },
+    select: { id: true, branchId: true },
   });
   if (!employee) return { error: "الموظف غير موجود" };
+
+  // المستخدم المقيّد بفرع لا ينشئ طلبات لموظفي فروع أخرى.
+  const scope = await getBranchScope(user);
+  if (scope.restrictToBranchId && employee.branchId !== scope.restrictToBranchId) {
+    return { error: "لا تملك صلاحية على موظفي فرع آخر" };
+  }
 
   try {
     await prisma.$transaction(async (tx) => {

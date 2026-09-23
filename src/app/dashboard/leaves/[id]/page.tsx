@@ -15,6 +15,7 @@ import {
   CardTitle,
   PageHeader,
 } from "@/components/ui";
+import { getBranchScope } from "@/app/dashboard/employees/branch-scope";
 import { runLeaveTransition } from "../actions";
 import { LEAVE_STATUS_LABELS, LEAVE_STATUS_TONES, LEAVE_TYPE_LABELS } from "../labels";
 import {
@@ -40,8 +41,10 @@ export default async function LeaveRequestPage({
           firstName: true,
           lastName: true,
           status: true,
+          branchId: true,
           department: { select: { name: true } },
           position: { select: { title: true } },
+          branch: { select: { name: true } },
         },
       },
       approver: { select: { name: true } },
@@ -49,6 +52,12 @@ export default async function LeaveRequestPage({
   });
 
   if (!request) notFound();
+
+  // المستخدم المقيّد بفرع لا يطّلع على طلبات موظفي الفروع الأخرى.
+  const scope = await getBranchScope(user);
+  if (scope.restrictToBranchId && request.employee.branchId !== scope.restrictToBranchId) {
+    notFound();
+  }
 
   const [snapshot, history] = await Promise.all([
     getWorkflowSnapshot(WorkflowEntityType.LEAVE_REQUEST, request.id, user.role),
@@ -61,6 +70,7 @@ export default async function LeaveRequestPage({
     { label: "إلى تاريخ", value: formatDate(request.endDate) },
     { label: "عدد الأيام", value: `${formatNumber(request.days, 0)} يوم` },
     { label: "تاريخ الطلب", value: formatDate(request.createdAt) },
+    { label: "الفرع", value: request.employee.branch?.name ?? "—" },
     { label: "القسم", value: request.employee.department?.name ?? "—" },
     { label: "المسمى الوظيفي", value: request.employee.position?.title ?? "—" },
     { label: "المعتمِد", value: request.approver?.name ?? "—" },

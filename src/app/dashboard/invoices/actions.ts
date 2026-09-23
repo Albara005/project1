@@ -13,9 +13,18 @@ import { requireUserAction } from "@/lib/session";
 import { toNumber } from "@/lib/utils";
 import {
   nextDocumentNumber,
+  postFxDifference,
   postPayment,
   PostingError,
 } from "@/lib/modules/accounting-posting";
+import {
+  CurrencyError,
+  getBaseCurrency,
+  getExchangeRate,
+  realizedFxDifference,
+  toBaseAmount,
+} from "@/lib/modules/currency";
+import { getBranchScope } from "./document-scope";
 
 export type ActionState = { error?: string; success?: boolean };
 
@@ -43,6 +52,10 @@ class PaymentError extends Error {}
 /**
  * تسجيل دفعة على فاتورة: إنشاء سند القبض/الصرف، تحديث المدفوع وحالة الفاتورة،
  * وترحيل القيد المحاسبي — كل ذلك ضمن معاملة واحدة.
+ *
+ * الدفعة تُسجَّل بعملة الفاتورة، لكنها تحمل سعر صرف تاريخ السداد لا تاريخ
+ * الفاتورة. القيد يُرحَّل بعملة الأساس بالمبلغ المحوَّل بسعر السداد، ويُرحَّل
+ * معه قيد فرق العملة المحقّق حتى تُقفل ذمم الطرف على صفر عند السداد الكامل.
  */
 export async function recordPayment(
   _prev: ActionState,
@@ -56,6 +69,7 @@ export async function recordPayment(
   }
 
   const input = parsed.data;
+  const scope = await getBranchScope(user);
 
   try {
     await prisma.$transaction(async (tx) => {
@@ -68,6 +82,9 @@ export async function recordPayment(
           status: true,
           total: true,
           paidAmount: true,
+          branchId: true,
+          currencyId: true,
+          exchangeRate: true,
         },
       });
 
@@ -76,6 +93,7 @@ export async function recordPayment(
         throw new PaymentError("لا يمكن تسجيل دفعة على فاتورة ملغاة");
       }
 
+      // المقارنة تتم بعملة الفاتورة: المدفوع والإجمالي بنفس العملة دائماً
       const total = toNumber(invoice.total);
       const alreadyPaid = toNumber(invoice.paidAmount);
       const remaining = round2(total - alreadyPaid);
@@ -89,6 +107,24 @@ export async function recordPayment(
         );
       }
 
+      const paidAt = input.paidAt ? new Date(input.paidAt) : new Date();
+
+      // الدفعة ترث عملة الفاتورة، لكن سعر صرفها هو سعر تاريخ السداد
+      const currencyId =
+        invoice.currencyId ?? (await getBaseCurrency(tx)).id;
+      const invoiceRate = toNumber(invoice.exchangeRate) || 1;
+
+      let paymentRate: number;
+      try {
+        paymentRate = await getExchangeRate(currencyId, paidAt, tx);
+      } catch (error) {
+        if (error instanceof CurrencyError) throw new PaymentError(error.message);
+        throw error;
+      }
+
+      const baseAmount = toBaseAmount(input.amount, paymentRate);
+      const branchId = invoice.branchId ?? scope.branchId;
+
       const number = await nextDocumentNumber(tx, "payment", "PAY");
       const direction =
         invoice.type === InvoiceType.SALES
@@ -101,13 +137,18 @@ export async function recordPayment(
           invoiceId: invoice.id,
           direction,
           method: input.method,
+          branchId,
+          currencyId,
+          exchangeRate: paymentRate,
           amount: input.amount,
-          paidAt: input.paidAt ? new Date(input.paidAt) : new Date(),
+          baseAmount,
+          paidAt,
           reference: input.reference,
           note: input.note,
         },
       });
 
+      // المدفوع يبقى بعملة الفاتورة حتى تصح المقارنة مع إجماليها
       const newPaid = round2(alreadyPaid + input.amount);
       const fullyPaid = total - newPaid <= 0.005;
 
@@ -119,16 +160,40 @@ export async function recordPayment(
         },
       });
 
+      // القيد يُرحَّل بعملة الأساس بقيمة المبلغ بسعر يوم السداد
       await postPayment(tx, {
         paymentId: payment.id,
         number: payment.number,
-        amount: input.amount,
+        amount: baseAmount,
         direction: direction === PaymentDirection.INBOUND ? "INBOUND" : "OUTBOUND",
         createdById: user.id,
+        branchId,
+      });
+
+      // الفرق بين قيمة المبلغ بسعر الفاتورة وسعر السداد يُقفل في فروقات العملة،
+      // فتعود ذمم الطرف إلى الصفر عند السداد الكامل
+      const difference = realizedFxDifference({
+        amount: input.amount,
+        invoiceRate,
+        paymentRate,
+        direction: direction === PaymentDirection.INBOUND ? "INBOUND" : "OUTBOUND",
+      });
+
+      await postFxDifference(tx, {
+        description: `فرق عملة عن سند ${payment.number} للفاتورة ${invoice.number}`,
+        difference,
+        direction: direction === PaymentDirection.INBOUND ? "INBOUND" : "OUTBOUND",
+        paymentId: payment.id,
+        createdById: user.id,
+        branchId,
       });
     });
   } catch (error) {
-    if (error instanceof PaymentError || error instanceof PostingError) {
+    if (
+      error instanceof PaymentError ||
+      error instanceof PostingError ||
+      error instanceof CurrencyError
+    ) {
       return { error: error.message };
     }
     console.error("recordPayment", error);
@@ -138,5 +203,6 @@ export async function recordPayment(
   revalidatePath("/dashboard/invoices");
   revalidatePath(`/dashboard/invoices/${input.invoiceId}`);
   revalidatePath("/dashboard/payments");
+  revalidatePath("/dashboard/customers");
   return { success: true };
 }

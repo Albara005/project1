@@ -19,6 +19,8 @@ import { createSalesOrder, type ActionState } from "./actions";
 
 export type CustomerOption = { id: string; code: string; name: string };
 export type WarehouseOption = { id: string; code: string; name: string };
+export type CurrencyOption = { id: string; code: string; name: string };
+export type BranchOption = { id: string; code: string; name: string };
 export type ProductOption = {
   id: string;
   sku: string;
@@ -59,16 +61,32 @@ export function SalesOrderForm({
   customers,
   warehouses,
   products,
+  currencies,
+  defaultCurrencyId,
+  branches,
+  defaultBranchId,
+  branchLocked,
 }: {
   customers: CustomerOption[];
   warehouses: WarehouseOption[];
   products: ProductOption[];
+  currencies: CurrencyOption[];
+  defaultCurrencyId: string;
+  branches: BranchOption[];
+  defaultBranchId: string;
+  /** المستخدم غير المدير محصور في فرعه فلا يستطيع تغييره. */
+  branchLocked: boolean;
 }) {
   const [state, formAction] = useActionState<ActionState, FormData>(
     createSalesOrder,
     {},
   );
   const [lines, setLines] = useState<LineRow[]>([emptyLine()]);
+  const [currencyId, setCurrencyId] = useState(defaultCurrencyId);
+
+  // رمز العملة المختارة يُستخدم لمعاينة الإجماليات فقط؛ القيم المعتمدة من الخادم
+  const currencyCode =
+    currencies.find((currency) => currency.id === currencyId)?.code ?? "SAR";
 
   function updateLine(key: string, patch: Partial<LineRow>) {
     setLines((current) =>
@@ -146,6 +164,41 @@ export function SalesOrderForm({
                   </option>
                 ))}
               </Select>
+            </div>
+            <div>
+              <Label htmlFor="currencyId">العملة</Label>
+              <Select
+                id="currencyId"
+                name="currencyId"
+                required
+                value={currencyId}
+                onChange={(event) => setCurrencyId(event.target.value)}
+              >
+                {currencies.map((currency) => (
+                  <option key={currency.id} value={currency.id}>
+                    {currency.code} — {currency.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor="branchId">الفرع</Label>
+              <Select
+                id="branchId"
+                name="branchId"
+                defaultValue={defaultBranchId}
+                disabled={branchLocked}
+              >
+                {branchLocked ? null : <option value="">بدون فرع</option>}
+                {branches.map((branch) => (
+                  <option key={branch.id} value={branch.id}>
+                    {branch.code} — {branch.name}
+                  </option>
+                ))}
+              </Select>
+              {branchLocked ? (
+                <input type="hidden" name="branchId" value={defaultBranchId} />
+              ) : null}
             </div>
             <div>
               <Label htmlFor="deliveryDate">تاريخ التسليم</Label>
@@ -240,9 +293,11 @@ export function SalesOrderForm({
                 <div className="flex items-center justify-between gap-2 md:col-span-2">
                   <div className="text-sm">
                     <p className="text-muted-foreground">الإجمالي</p>
-                    <p className="font-medium">{formatCurrency(lineTotal)}</p>
+                    <p className="font-medium">
+                      {formatCurrency(lineTotal, currencyCode)}
+                    </p>
                     <p className="text-xs text-muted-foreground">
-                      ضريبة {formatCurrency((lineTotal * taxRate) / 100)}
+                      ضريبة {formatCurrency((lineTotal * taxRate) / 100, currencyCode)}
                     </p>
                   </div>
                   <Button
@@ -275,18 +330,19 @@ export function SalesOrderForm({
           <div className="mt-2 space-y-1 border-t border-border pt-3 text-sm">
             <div className="flex justify-between">
               <span className="text-muted-foreground">المجموع قبل الضريبة</span>
-              <span>{formatCurrency(totals.subtotal)}</span>
+              <span>{formatCurrency(totals.subtotal, currencyCode)}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">الضريبة</span>
-              <span>{formatCurrency(totals.taxAmount)}</span>
+              <span>{formatCurrency(totals.taxAmount, currencyCode)}</span>
             </div>
             <div className="flex justify-between text-base font-bold">
               <span>الإجمالي</span>
-              <span>{formatCurrency(totals.total)}</span>
+              <span>{formatCurrency(totals.total, currencyCode)}</span>
             </div>
             <p className="pt-1 text-xs text-muted-foreground">
-              القيم أعلاه للمعاينة فقط، ويُعاد احتسابها في الخادم عند الحفظ.
+              القيم أعلاه بعملة المستند وللمعاينة فقط، ويُعاد احتسابها في الخادم
+              عند الحفظ مع تثبيت سعر الصرف ومعادلها بعملة الأساس.
             </p>
           </div>
         </CardContent>

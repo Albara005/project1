@@ -2,11 +2,34 @@ import Link from "next/link";
 import { InvoiceStatus, SalesOrderStatus } from "@/generated/prisma";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/session";
+import {
+  CurrencyError,
+  formatMoney,
+  getBaseCurrency,
+  round2,
+  type CurrencyInfo,
+} from "@/lib/modules/currency";
 import { formatCurrency, formatNumber, toNumber } from "@/lib/utils";
 import { Badge, Card, CardContent, CardHeader, CardTitle, PageHeader } from "@/components/ui";
+import { getUserBranchScope } from "@/app/dashboard/reports/branch-scope";
+
+export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
   const user = await requireUser();
+
+  // نطاق العرض: ADMIN ومن لا فرع له يرى المنشأة كاملة، وغيرهما يرى فرعه فقط.
+  const scope = await getUserBranchScope(user);
+  const branchId = scope.branchId ?? undefined;
+  const scopeLabel = scope.branchId ? (scope.branchName ?? "فرعي") : "كل الفروع";
+
+  // عملة الدفاتر — كل مؤشرات لوحة التحكم مجمّعة بها عبر أعمدة base*.
+  let baseCurrency: CurrencyInfo | null = null;
+  try {
+    baseCurrency = await getBaseCurrency();
+  } catch (error) {
+    if (!(error instanceof CurrencyError)) throw error;
+  }
 
   const [
     salesAgg,
@@ -18,25 +41,41 @@ export default async function DashboardPage() {
     lowStock,
     recentInvoices,
   ] = await Promise.all([
+    // المبالغ المجمّعة تستخدم دائماً أعمدة عملة الأساس (baseTotal) حتى لا تُجمع
+    // فواتير الدولار مع فواتير الريال.
     prisma.invoice.aggregate({
-      where: { type: "SALES", status: { not: InvoiceStatus.CANCELLED } },
-      _sum: { total: true },
+      where: { type: "SALES", status: { not: InvoiceStatus.CANCELLED }, branchId },
+      _sum: { baseTotal: true },
     }),
     prisma.salesOrder.count({
       where: {
         status: { in: [SalesOrderStatus.DRAFT, SalesOrderStatus.PENDING_APPROVAL, SalesOrderStatus.CONFIRMED] },
+        branchId,
       },
     }),
     prisma.invoice.findMany({
       where: {
         type: "SALES",
         status: { in: [InvoiceStatus.ISSUED, InvoiceStatus.PARTIALLY_PAID] },
+        branchId,
       },
-      select: { total: true, paidAmount: true },
+      select: { baseTotal: true, paidAmount: true, exchangeRate: true },
     }),
-    prisma.product.count({ where: { isActive: true } }),
-    prisma.employee.count({ where: { status: "ACTIVE" } }),
-    prisma.leaveRequest.count({ where: { status: "PENDING" } }),
+    prisma.product.count({
+      where: {
+        isActive: true,
+        ...(branchId
+          ? { stockItems: { some: { warehouse: { branchId } } } }
+          : {}),
+      },
+    }),
+    prisma.employee.count({ where: { status: "ACTIVE", branchId } }),
+    prisma.leaveRequest.count({
+      where: {
+        status: "PENDING",
+        ...(branchId ? { employee: { branchId } } : {}),
+      },
+    }),
     prisma.product.findMany({
       where: { isActive: true, reorderLevel: { gt: 0 } },
       select: {
@@ -44,29 +83,38 @@ export default async function DashboardPage() {
         name: true,
         sku: true,
         reorderLevel: true,
-        stockItems: { select: { quantity: true } },
+        stockItems: {
+          where: branchId ? { warehouse: { branchId } } : undefined,
+          select: { quantity: true },
+        },
       },
       take: 50,
     }),
     prisma.invoice.findMany({
-      where: { type: "SALES" },
+      where: { type: "SALES", branchId },
       orderBy: { issueDate: "desc" },
       take: 5,
       select: {
         id: true,
         number: true,
         total: true,
+        baseTotal: true,
         status: true,
         issueDate: true,
         customer: { select: { name: true } },
+        currency: { select: { code: true, decimals: true, isBase: true } },
       },
     }),
   ]);
 
-  const receivables = unpaidInvoices.reduce(
-    (sum, invoice) => sum + toNumber(invoice.total) - toNumber(invoice.paidAmount),
-    0,
-  );
+  // المتبقي على العملاء بعملة الدفاتر: المدفوع مسجَّل بعملة الفاتورة، لذلك
+  // نحوّله بسعر الصرف المثبّت على الفاتورة نفسها قبل طرحه من الإجمالي الأساسي.
+  const receivables = unpaidInvoices.reduce((sum, invoice) => {
+    const basePaid = round2(
+      toNumber(invoice.paidAmount) * toNumber(invoice.exchangeRate),
+    );
+    return sum + toNumber(invoice.baseTotal) - basePaid;
+  }, 0);
 
   const lowStockItems = lowStock
     .map((product) => ({
@@ -78,13 +126,13 @@ export default async function DashboardPage() {
   const kpis = [
     {
       label: "إجمالي المبيعات",
-      value: formatCurrency(toNumber(salesAgg._sum.total)),
-      hint: "قيمة كل فواتير المبيعات",
+      value: formatCurrency(toNumber(salesAgg._sum.baseTotal)),
+      hint: "قيمة كل فواتير المبيعات بعملة الدفاتر",
     },
     {
       label: "الذمم المدينة",
       value: formatCurrency(receivables),
-      hint: "مبالغ مستحقة على العملاء",
+      hint: "مبالغ مستحقة على العملاء بعملة الدفاتر",
     },
     {
       label: "أوامر بيع مفتوحة",
@@ -107,7 +155,13 @@ export default async function DashboardPage() {
     <div>
       <PageHeader
         title={`مرحباً، ${user.name}`}
-        description="نظرة عامة على أداء المنشأة"
+        description={`نظرة عامة على أداء المنشأة — المبالغ بعملة الدفاتر${baseCurrency ? ` (${baseCurrency.code})` : ""}`}
+        action={
+          <span className="flex flex-wrap items-center gap-2">
+            <span className="text-sm text-muted-foreground">نطاق العرض:</span>
+            <Badge tone={scope.branchId ? "blue" : "gray"}>{scopeLabel}</Badge>
+          </span>
+        }
       />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
@@ -134,37 +188,49 @@ export default async function DashboardPage() {
               </p>
             ) : (
               <ul className="divide-y divide-border">
-                {recentInvoices.map((invoice) => (
-                  <li key={invoice.id} className="flex items-center justify-between py-2.5">
-                    <div className="min-w-0">
-                      <Link
-                        href={`/dashboard/invoices/${invoice.id}`}
-                        className="text-sm font-medium hover:underline"
-                      >
-                        {invoice.number}
-                      </Link>
-                      <p className="truncate text-xs text-muted-foreground">
-                        {invoice.customer?.name ?? "—"}
-                      </p>
-                    </div>
-                    <div className="text-end">
-                      <p className="text-sm font-medium">
-                        {formatCurrency(toNumber(invoice.total))}
-                      </p>
-                      <Badge
-                        tone={
-                          invoice.status === InvoiceStatus.PAID
-                            ? "green"
-                            : invoice.status === InvoiceStatus.CANCELLED
-                              ? "red"
-                              : "amber"
-                        }
-                      >
-                        {INVOICE_STATUS_LABELS[invoice.status]}
-                      </Badge>
-                    </div>
-                  </li>
-                ))}
+                {recentInvoices.map((invoice) => {
+                  // المستند يُعرض بعملته، ويُعرض ما يقابله بعملة الدفاتر أسفله.
+                  const currency = invoice.currency;
+                  const isForeign = Boolean(currency && !currency.isBase);
+                  const displayAmount = currency
+                    ? formatMoney(toNumber(invoice.total), currency)
+                    : formatCurrency(toNumber(invoice.total));
+
+                  return (
+                    <li key={invoice.id} className="flex items-center justify-between py-2.5">
+                      <div className="min-w-0">
+                        <Link
+                          href={`/dashboard/invoices/${invoice.id}`}
+                          className="text-sm font-medium hover:underline"
+                        >
+                          {invoice.number}
+                        </Link>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {invoice.customer?.name ?? "—"}
+                        </p>
+                      </div>
+                      <div className="text-end">
+                        <p className="text-sm font-medium">{displayAmount}</p>
+                        {isForeign ? (
+                          <p className="text-xs text-muted-foreground">
+                            ‎= {formatCurrency(toNumber(invoice.baseTotal))}
+                          </p>
+                        ) : null}
+                        <Badge
+                          tone={
+                            invoice.status === InvoiceStatus.PAID
+                              ? "green"
+                              : invoice.status === InvoiceStatus.CANCELLED
+                                ? "red"
+                                : "amber"
+                          }
+                        >
+                          {INVOICE_STATUS_LABELS[invoice.status]}
+                        </Badge>
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </CardContent>

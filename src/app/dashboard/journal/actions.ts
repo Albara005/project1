@@ -9,8 +9,9 @@ import {
   PostingError,
   postJournalEntry,
 } from "@/lib/modules/accounting-posting";
-import { requireUserAction } from "@/lib/session";
+import { requireUserAction, type CurrentUser } from "@/lib/session";
 import { toNumber } from "@/lib/utils";
+import { getUserBranchScope } from "@/app/dashboard/reports/branch-scope";
 
 export type ActionState = { error?: string; success?: boolean };
 
@@ -27,7 +28,34 @@ const entrySchema = z.object({
   entryDate: z.string().trim().min(1, "تاريخ القيد مطلوب"),
   description: z.string().trim().min(1, "بيان القيد مطلوب"),
   lines: z.string().min(1, "أضف سطور القيد"),
+  branchId: z.string().trim().optional(),
 });
+
+/**
+ * الفرع الذي يُرحّل عليه القيد: المستخدم المقيّد بفرع لا يستطيع الترحيل على غيره،
+ * بينما يختار ADMIN (ومن لا فرع له) أي فرع نشط أو يتركه بدون فرع.
+ */
+async function resolveEntryBranch(
+  user: CurrentUser,
+  requested: string | undefined,
+): Promise<{ branchId: string | null } | { error: string }> {
+  const scope = await getUserBranchScope(user);
+
+  if (!scope.canSeeAllBranches) {
+    return { branchId: scope.branchId };
+  }
+
+  const value = requested?.trim() ?? "";
+  if (value === "") return { branchId: null };
+
+  const branch = await prisma.branch.findFirst({
+    where: { id: value, isActive: true },
+    select: { id: true },
+  });
+  if (!branch) return { error: "الفرع المحدد غير موجود أو غير نشط" };
+
+  return { branchId: branch.id };
+}
 
 /** إنشاء قيد يدوي مرحّل عبر خدمة الترحيل المشتركة (تتحقق من توازن القيد). */
 export async function createManualEntry(
@@ -78,6 +106,9 @@ export async function createManualEntry(
     return { error: "أدخل مبلغاً مديناً أو دائناً لكل سطر" };
   }
 
+  const branch = await resolveEntryBranch(user, parsed.data.branchId);
+  if ("error" in branch) return { error: branch.error };
+
   let entryId = "";
   try {
     const entry = await prisma.$transaction((tx) =>
@@ -86,6 +117,7 @@ export async function createManualEntry(
         entryDate,
         sourceType: JournalSourceType.MANUAL,
         createdById: user.id,
+        branchId: branch.branchId,
         lines: lines.map((line) => ({
           accountCode: line.accountCode,
           debit: line.debit,
@@ -135,6 +167,8 @@ export async function reverseEntry(
         entryDate: new Date(),
         sourceType: JournalSourceType.MANUAL,
         createdById: user.id,
+        // القيد العكسي يبقى على نفس فرع القيد الأصلي حتى تتطابق تقارير الفروع.
+        branchId: entry.branchId,
         lines: entry.lines.map((line) => ({
           accountCode: line.account.code,
           debit: toNumber(line.credit),

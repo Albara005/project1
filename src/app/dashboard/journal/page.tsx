@@ -23,6 +23,11 @@ import {
 } from "@/components/ui";
 import { parseDateParam } from "@/app/dashboard/reports/date-range";
 import {
+  ALL_BRANCHES_LABEL,
+  listBranchOptions,
+  resolveBranchParam,
+} from "@/app/dashboard/reports/branch-scope";
+import {
   ENTRY_STATUS_LABELS,
   ENTRY_STATUS_ORDER,
   ENTRY_STATUS_TONES,
@@ -38,6 +43,7 @@ type SearchParams = {
   to?: string;
   status?: string;
   source?: string;
+  branch?: string;
 };
 
 export default async function JournalPage({
@@ -46,7 +52,7 @@ export default async function JournalPage({
   searchParams: Promise<SearchParams>;
 }) {
   await requireModule("accounting");
-  const { from, to, status, source } = await searchParams;
+  const { from, to, status, source, branch } = await searchParams;
 
   const fromDate = parseDateParam(from);
   const toDate = parseDateParam(to, true);
@@ -60,10 +66,14 @@ export default async function JournalPage({
       ? (source as JournalSourceType)
       : undefined;
 
+  const branches = await listBranchOptions();
+  const branchFilter = resolveBranchParam(branch, branches);
+
   const where: Prisma.JournalEntryWhereInput = {
     entryDate: fromDate || toDate ? { gte: fromDate, lte: toDate } : undefined,
     status: statusFilter,
     sourceType: sourceFilter,
+    branchId: branchFilter,
   };
 
   const entries = await prisma.journalEntry.findMany({
@@ -77,6 +87,7 @@ export default async function JournalPage({
       description: true,
       status: true,
       sourceType: true,
+      branch: { select: { id: true, name: true } },
       lines: { select: { debit: true } },
     },
   });
@@ -104,7 +115,7 @@ export default async function JournalPage({
 
       <Card className="mb-6">
         <CardContent className="pt-5">
-          <form method="get" className="grid items-end gap-4 md:grid-cols-5">
+          <form method="get" className="grid items-end gap-4 md:grid-cols-6">
             <div>
               <Label htmlFor="from">من تاريخ</Label>
               <Input id="from" name="from" type="date" defaultValue={from ?? ""} />
@@ -131,6 +142,17 @@ export default async function JournalPage({
                 {SOURCE_TYPE_ORDER.map((value) => (
                   <option key={value} value={value}>
                     {SOURCE_TYPE_LABELS[value]}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor="branch">الفرع</Label>
+              <Select id="branch" name="branch" defaultValue={branchFilter ?? ""}>
+                <option value="">{ALL_BRANCHES_LABEL}</option>
+                {branches.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.name}
                   </option>
                 ))}
               </Select>
@@ -166,6 +188,7 @@ export default async function JournalPage({
                   <TH>رقم القيد</TH>
                   <TH>التاريخ</TH>
                   <TH>البيان</TH>
+                  <TH>الفرع</TH>
                   <TH>المصدر</TH>
                   <TH>الحالة</TH>
                   <TH className="text-end">إجمالي المدين</TH>
@@ -185,6 +208,9 @@ export default async function JournalPage({
                     </TD>
                     <TD>{formatDate(row.entryDate)}</TD>
                     <TD className="max-w-[28rem] truncate">{row.description}</TD>
+                    <TD className="text-muted-foreground">
+                      {row.branch?.name ?? "—"}
+                    </TD>
                     <TD>
                       <Badge tone={SOURCE_TYPE_TONES[row.sourceType]}>
                         {SOURCE_TYPE_LABELS[row.sourceType]}
@@ -203,7 +229,11 @@ export default async function JournalPage({
               </TBody>
             </Table>
             <p className="px-4 pt-4 text-sm text-muted-foreground">
-              عدد القيود المعروضة: {rows.length} — إجمالي مدين القيود المرحّلة:{" "}
+              النطاق:{" "}
+              {branchFilter
+                ? branches.find((option) => option.id === branchFilter)?.name
+                : ALL_BRANCHES_LABEL}{" "}
+              — عدد القيود المعروضة: {rows.length} — إجمالي مدين القيود المرحّلة:{" "}
               <span className="font-medium text-foreground">
                 {formatCurrency(grandTotal)}
               </span>

@@ -2,7 +2,8 @@ import Link from "next/link";
 import type { InvoiceStatus, InvoiceType, Prisma } from "@/generated/prisma";
 import { prisma } from "@/lib/db";
 import { requireModule } from "@/lib/session";
-import { cn, formatCurrency, formatDate, toNumber } from "@/lib/utils";
+import { cn, formatDate, toNumber } from "@/lib/utils";
+import { formatMoney, getBaseCurrency } from "@/lib/modules/currency";
 import {
   Badge,
   Card,
@@ -16,6 +17,8 @@ import {
   THead,
   TR,
 } from "@/components/ui";
+import { Money, baseValue } from "./document-money";
+import { branchFilter, getBranchScope } from "./document-scope";
 import {
   INVOICE_STATUS_LABELS,
   INVOICE_STATUS_TONES,
@@ -38,7 +41,8 @@ export default async function InvoicesPage({
 }: {
   searchParams: Promise<{ type?: string; status?: string }>;
 }) {
-  await requireModule("sales");
+  const user = await requireModule("sales");
+  const scope = await getBranchScope(user);
   const query = await searchParams;
 
   const type: InvoiceType | undefined = INVOICE_TYPE_VALUES.find(
@@ -51,25 +55,34 @@ export default async function InvoicesPage({
   const where: Prisma.InvoiceWhereInput = {
     ...(type ? { type } : {}),
     ...(status ? { status } : {}),
+    ...branchFilter(scope),
   };
 
-  const invoices = await prisma.invoice.findMany({
-    where,
-    orderBy: { issueDate: "desc" },
-    include: {
-      customer: { select: { name: true } },
-      supplier: { select: { name: true } },
-    },
-  });
+  const [invoices, baseCurrency] = await Promise.all([
+    prisma.invoice.findMany({
+      where,
+      orderBy: { issueDate: "desc" },
+      include: {
+        customer: { select: { name: true } },
+        supplier: { select: { name: true } },
+        branch: { select: { name: true } },
+        currency: { select: { code: true, decimals: true } },
+      },
+    }),
+    getBaseCurrency(),
+  ]);
 
+  // المجاميع عبر فواتير بعملات مختلفة لا تصح إلا بعملة الأساس
   const totals = invoices.reduce(
     (acc, invoice) => {
-      const total = toNumber(invoice.total);
-      const paid = toNumber(invoice.paidAmount);
+      const rate = invoice.exchangeRate;
+      const baseTotal = baseValue(toNumber(invoice.total), invoice.baseTotal, rate);
+      const basePaid = baseValue(toNumber(invoice.paidAmount), 0, rate);
       return {
-        total: acc.total + total,
+        total: acc.total + baseTotal,
         remaining:
-          acc.remaining + (invoice.status === "CANCELLED" ? 0 : total - paid),
+          acc.remaining +
+          (invoice.status === "CANCELLED" ? 0 : baseTotal - basePaid),
       };
     },
     { total: 0, remaining: 0 },
@@ -90,7 +103,7 @@ export default async function InvoicesPage({
     <div>
       <PageHeader
         title="الفواتير"
-        description={`${invoices.length} فاتورة · الإجمالي ${formatCurrency(totals.total)} · المتبقي ${formatCurrency(totals.remaining)}`}
+        description={`${invoices.length} فاتورة · الإجمالي ${formatMoney(totals.total, baseCurrency)} · المتبقي ${formatMoney(totals.remaining, baseCurrency)} (بعملة الأساس)`}
       />
 
       <div className="mb-4 space-y-2">
@@ -141,8 +154,10 @@ export default async function InvoicesPage({
                   <TH>رقم الفاتورة</TH>
                   <TH>النوع</TH>
                   <TH>الطرف</TH>
+                  <TH>الفرع</TH>
                   <TH>تاريخ الإصدار</TH>
                   <TH>الاستحقاق</TH>
+                  <TH>العملة</TH>
                   <TH>الإجمالي</TH>
                   <TH>المدفوع</TH>
                   <TH>المتبقي</TH>
@@ -153,6 +168,9 @@ export default async function InvoicesPage({
                 {invoices.map((invoice) => {
                   const total = toNumber(invoice.total);
                   const paid = toNumber(invoice.paidAmount);
+                  const rate = invoice.exchangeRate;
+                  const baseTotal = baseValue(total, invoice.baseTotal, rate);
+                  const basePaid = baseValue(paid, 0, rate);
 
                   return (
                     <TR key={invoice.id}>
@@ -173,14 +191,45 @@ export default async function InvoicesPage({
                         {invoice.customer?.name ?? invoice.supplier?.name ?? "—"}
                       </TD>
                       <TD className="text-muted-foreground">
+                        {invoice.branch?.name ?? "—"}
+                      </TD>
+                      <TD className="text-muted-foreground">
                         {formatDate(invoice.issueDate)}
                       </TD>
                       <TD className="text-muted-foreground">
                         {formatDate(invoice.dueDate)}
                       </TD>
-                      <TD className="font-medium">{formatCurrency(total)}</TD>
-                      <TD>{formatCurrency(paid)}</TD>
-                      <TD>{formatCurrency(total - paid)}</TD>
+                      <TD className="text-muted-foreground">
+                        {invoice.currency?.code ?? baseCurrency.code}
+                      </TD>
+                      <TD>
+                        <Money
+                          amount={total}
+                          currency={invoice.currency}
+                          storedBase={invoice.baseTotal}
+                          exchangeRate={rate}
+                          baseCurrency={baseCurrency}
+                          className="font-medium"
+                        />
+                      </TD>
+                      <TD>
+                        <Money
+                          amount={paid}
+                          currency={invoice.currency}
+                          storedBase={basePaid}
+                          exchangeRate={rate}
+                          baseCurrency={baseCurrency}
+                        />
+                      </TD>
+                      <TD>
+                        <Money
+                          amount={total - paid}
+                          currency={invoice.currency}
+                          storedBase={baseTotal - basePaid}
+                          exchangeRate={rate}
+                          baseCurrency={baseCurrency}
+                        />
+                      </TD>
                       <TD>
                         <Badge tone={INVOICE_STATUS_TONES[invoice.status]}>
                           {INVOICE_STATUS_LABELS[invoice.status]}

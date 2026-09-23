@@ -4,18 +4,32 @@ import { requireModule } from "@/lib/session";
 import { Button, EmptyState, PageHeader } from "@/components/ui";
 import { ACCOUNT_TYPE_LABELS } from "@/app/dashboard/accounts/account-labels";
 import { toDateInputValue } from "@/app/dashboard/reports/date-range";
+import {
+  getUserBranchScope,
+  listBranchOptions,
+} from "@/app/dashboard/reports/branch-scope";
 import { JournalEntryForm } from "../journal-entry-form";
 
 export const dynamic = "force-dynamic";
 
 export default async function NewJournalEntryPage() {
-  await requireModule("accounting");
+  const user = await requireModule("accounting");
 
-  const accounts = await prisma.chartOfAccount.findMany({
-    where: { isActive: true },
-    orderBy: { code: "asc" },
-    select: { code: true, name: true, type: true },
-  });
+  const [accounts, branches, scope] = await Promise.all([
+    prisma.chartOfAccount.findMany({
+      where: { isActive: true },
+      orderBy: { code: "asc" },
+      select: { code: true, name: true, type: true },
+    }),
+    listBranchOptions(),
+    getUserBranchScope(user),
+  ]);
+
+  // الفرع الافتراضي هو فرع المستخدم، و ADMIN (ومن لا فرع له) يمكنه اختيار فرع آخر.
+  const defaultBranchId = scope.homeBranchId ?? "";
+  const lockedBranchName = scope.canSeeAllBranches
+    ? null
+    : (branches.find((branch) => branch.id === defaultBranchId)?.name ?? null);
 
   // نمرّر نصوصاً بسيطة فقط إلى مكوّن العميل (لا نمرّر نماذج Prisma).
   const options = accounts.map((account) => ({
@@ -49,7 +63,14 @@ export default async function NewJournalEntryPage() {
           }
         />
       ) : (
-        <JournalEntryForm accounts={options} today={toDateInputValue(new Date())} />
+        <JournalEntryForm
+          accounts={options}
+          today={toDateInputValue(new Date())}
+          branches={branches}
+          defaultBranchId={defaultBranchId}
+          canChooseBranch={scope.canSeeAllBranches}
+          lockedBranchName={lockedBranchName}
+        />
       )}
     </div>
   );

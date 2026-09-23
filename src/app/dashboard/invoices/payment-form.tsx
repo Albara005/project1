@@ -3,7 +3,7 @@
 import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
 import { Button, Input, Label, Select, Textarea } from "@/components/ui";
-import { formatCurrency } from "@/lib/utils";
+
 import { recordPayment, type ActionState } from "./actions";
 import {
   PAYMENT_METHOD_LABELS,
@@ -23,10 +23,13 @@ export function PaymentForm({
   invoiceId,
   remaining,
   today,
+  currencyCode,
 }: {
   invoiceId: string;
   remaining: number;
   today: string;
+  /** عملة الفاتورة: الدفعة تُسجَّل بها، ويُحسب مقابلها بعملة الأساس في الخادم. */
+  currencyCode: string;
 }) {
   const [state, formAction] = useActionState<ActionState, FormData>(
     recordPayment,
@@ -40,7 +43,10 @@ export function PaymentForm({
       <input type="hidden" name="invoiceId" value={invoiceId} />
 
       <div>
-        <Label htmlFor="amount">المبلغ (المتبقي {formatCurrency(remaining)})</Label>
+        <Label htmlFor="amount">
+          المبلغ بعملة الفاتورة ({currencyCode}) — المتبقي{" "}
+          {remaining.toLocaleString("ar-SA-u-nu-latn", { minimumFractionDigits: 2 })}
+        </Label>
         <Input
           id="amount"
           name="amount"

@@ -23,6 +23,13 @@ export type AccountOption = {
   typeLabel: string;
 };
 
+/** خيار فرع — قيم نصية بسيطة قادمة من مكوّن الخادم. */
+export type BranchChoice = {
+  id: string;
+  code: string;
+  name: string;
+};
+
 type LineRow = {
   key: number;
   accountCode: string;
@@ -52,9 +59,17 @@ function SubmitButton({ disabled }: { disabled: boolean }) {
 export function JournalEntryForm({
   accounts,
   today,
+  branches,
+  defaultBranchId,
+  canChooseBranch,
+  lockedBranchName,
 }: {
   accounts: AccountOption[];
   today: string;
+  branches: BranchChoice[];
+  defaultBranchId: string;
+  canChooseBranch: boolean;
+  lockedBranchName: string | null;
 }) {
   const [state, formAction] = useActionState<ActionState, FormData>(
     createManualEntry,
@@ -126,7 +141,31 @@ export function JournalEntryForm({
                 defaultValue={today}
               />
             </div>
-            <div className="md:col-span-2">
+            <div>
+              <Label htmlFor="branchId">الفرع</Label>
+              {canChooseBranch ? (
+                <Select
+                  id="branchId"
+                  name="branchId"
+                  defaultValue={defaultBranchId}
+                >
+                  <option value="">بدون فرع</option>
+                  {branches.map((branch) => (
+                    <option key={branch.id} value={branch.id}>
+                      {branch.name}
+                    </option>
+                  ))}
+                </Select>
+              ) : (
+                <>
+                  <input type="hidden" name="branchId" value={defaultBranchId} />
+                  <p className="flex h-10 items-center rounded-lg border border-border bg-muted px-3 text-sm">
+                    {lockedBranchName ?? "بدون فرع"}
+                  </p>
+                </>
+              )}
+            </div>
+            <div>
               <Label htmlFor="description">البيان</Label>
               <Input
                 id="description"
