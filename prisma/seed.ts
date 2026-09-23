@@ -13,6 +13,14 @@ const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
 
 async function main() {
+  // التعبئة تعمل على قاعدة فارغة فقط. بعد أول نشر تصبح البيانات بيانات المستخدم،
+  // وإعادة التعبئة كانت ستعيد كتابة كلمات المرور وتُرجع العيّنات التي حذفها.
+  const existing = await prisma.organization.count();
+  if (existing > 0 && !process.env.FORCE_SEED) {
+    console.log("⏭️  قاعدة البيانات مُعبّأة مسبقاً — تم التخطي.");
+    return;
+  }
+
   console.log("🌱 بدء تعبئة البيانات التجريبية...");
 
   const organization = await prisma.organization.upsert({
@@ -40,7 +48,9 @@ async function main() {
     { name: "هدى الموارد البشرية", email: "hr@erp.local", role: Role.HR },
   ];
 
-  const passwordHash = await bcrypt.hash("Admin@123", 10);
+  // كلمة المرور تُؤخذ من البيئة عند النشر، ويبقى الافتراضي للتطوير المحلي فقط.
+  const seedPassword = process.env.SEED_ADMIN_PASSWORD ?? "Admin@123";
+  const passwordHash = await bcrypt.hash(seedPassword, 10);
   for (const user of users) {
     await prisma.user.upsert({
       where: { email: user.email },
@@ -423,7 +433,11 @@ async function main() {
   }
 
   console.log("✅ اكتملت تعبئة البيانات التجريبية");
-  console.log("   بيانات الدخول: admin@erp.local / Admin@123");
+  console.log(
+    `   بيانات الدخول: admin@erp.local / ${
+      process.env.SEED_ADMIN_PASSWORD ? "(كلمة المرور من SEED_ADMIN_PASSWORD)" : seedPassword
+    }`,
+  );
 }
 
 type SeedState = {
