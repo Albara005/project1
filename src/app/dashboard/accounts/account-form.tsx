@@ -30,6 +30,7 @@ export type EditingAccount = {
   parentId: string | null;
   description: string | null;
   isActive: boolean;
+  cashFlowCategory: string | null;
 };
 
 function SubmitButton({ editing }: { editing: boolean }) {
@@ -98,6 +99,23 @@ export function AccountForm({
                   </option>
                 ))}
               </Select>
+            </div>
+            <div>
+              <Label htmlFor="cashFlowCategory">تصنيف التدفقات النقدية</Label>
+              <Select
+                id="cashFlowCategory"
+                name="cashFlowCategory"
+                defaultValue={editing?.cashFlowCategory ?? ""}
+              >
+                <option value="">— تشغيلي (افتراضي) —</option>
+                <option value="OPERATING">تشغيلي</option>
+                <option value="INVESTING">استثماري</option>
+                <option value="FINANCING">تمويلي</option>
+                <option value="CASH">نقدية وما في حكمها</option>
+              </Select>
+              <p className="mt-1 text-xs text-muted-foreground">
+                يحدد موضع الحساب في قائمة التدفقات النقدية.
+              </p>
             </div>
             <div>
               <Label htmlFor="parentId">الحساب الأب (اختياري)</Label>

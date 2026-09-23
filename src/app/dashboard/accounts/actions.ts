@@ -28,6 +28,9 @@ const accountSchema = z.object({
   parentId: z.string().trim().optional(),
   description: z.string().trim().optional(),
   isActive: z.string().optional(),
+  cashFlowCategory: z
+    .enum(["OPERATING", "INVESTING", "FINANCING", "CASH", ""])
+    .optional(),
 });
 
 async function resolveParent(
@@ -78,6 +81,7 @@ export async function createAccount(
         code: parsed.data.code,
         name: parsed.data.name,
         type: parsed.data.type,
+        cashFlowCategory: parsed.data.cashFlowCategory || null,
         parentId: parent.value,
         description: parsed.data.description || null,
         isActive: parsed.data.isActive !== "false",
@@ -115,6 +119,7 @@ export async function updateAccount(
         code: parsed.data.code,
         name: parsed.data.name,
         type: parsed.data.type,
+        cashFlowCategory: parsed.data.cashFlowCategory || null,
         parentId: parent.value,
         description: parsed.data.description || null,
         isActive: parsed.data.isActive !== "false",

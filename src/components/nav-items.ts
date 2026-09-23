@@ -45,6 +45,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/dashboard/accounts", label: "دليل الحسابات", module: "accounting" },
       { href: "/dashboard/journal", label: "القيود المحاسبية", module: "accounting" },
       { href: "/dashboard/reports", label: "التقارير المالية", module: "accounting" },
+      { href: "/dashboard/reports/cash-flow", label: "التدفقات النقدية", module: "accounting" },
     ],
   },
   {

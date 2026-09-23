@@ -716,6 +716,14 @@ model Payment {
 // Accounting - المحاسبة
 // ---------------------------------------------------------------------------
 
+/** تصنيف الحساب في قائمة التدفقات النقدية. */
+enum CashFlowCategory {
+  OPERATING
+  INVESTING
+  FINANCING
+  CASH
+}
+
 enum AccountType {
   ASSET
   LIABILITY
@@ -734,6 +742,11 @@ model ChartOfAccount {
   children    ChartOfAccount[] @relation("AccountTree")
   isActive    Boolean  @default(true)
   description String?
+  /**
+   * تصنيف الحساب في قائمة التدفقات النقدية. CASH يعني أن الحساب نقدية أو ما
+   * في حكمها فتُقاس حركته لا تُصنَّف. الحساب بلا تصنيف يُعامل كنشاط تشغيلي.
+   */
+  cashFlowCategory CashFlowCategory?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
