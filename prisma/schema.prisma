@@ -132,6 +132,97 @@ model Branch {
   @@index([isActive])
 }
 
+// ---------------------------------------------------------------------------
+// E-Invoicing Phase 2 - الفوترة الإلكترونية (مرحلة التكامل)
+// ---------------------------------------------------------------------------
+
+/** نوع المستند في معيار ZATCA: قياسية تُجاز قبل الإرسال، ومبسطة تُبلَّغ خلال 24 ساعة. */
+enum EInvoiceType {
+  STANDARD
+  SIMPLIFIED
+}
+
+enum EInvoiceStatus {
+  /** أُنشئ الـXML ولم يُوقَّع بعد */
+  GENERATED
+  /** وُقِّع تشفيرياً وجاهز للإرسال */
+  SIGNED
+  /** أُرسل للهيئة وينتظر الرد */
+  SUBMITTED
+  /** مبسطة: بُلِّغت بنجاح */
+  REPORTED
+  /** قياسية: أُجيزت من الهيئة */
+  CLEARED
+  /** قُبلت مع ملاحظات */
+  ACCEPTED_WITH_WARNINGS
+  /** رُفضت */
+  REJECTED
+  FAILED
+}
+
+/**
+ * سجل الفوترة الإلكترونية لكل فاتورة: يحفظ الـXML وتجزئته وتسلسلها.
+ *
+ * التسلسل جوهر المرحلة الثانية: كل فاتورة تحمل عدّاداً متتابعاً (ICV) وتجزئة
+ * الفاتورة السابقة (PIH)، فتتكوّن سلسلة لا يمكن حذف حلقة منها أو تعديلها
+ * دون أن ينكسر التحقق.
+ */
+model EInvoice {
+  id             String   @id @default(cuid())
+  invoiceId      String   @unique
+  invoice        Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  uuid           String   @unique
+  /** عدّاد الفاتورة المتتابع على مستوى جهاز الإصدار */
+  icv            BigInt
+  /** تجزئة هذه الفاتورة (SHA-256 بترميز base64) */
+  hash           String
+  /** تجزئة الفاتورة السابقة في السلسلة */
+  previousHash   String
+  type           EInvoiceType
+  status         EInvoiceStatus @default(GENERATED)
+  xml            String
+  signedXml      String?
+  /** رمز QR للمرحلة الثانية (TLV بتسعة حقول) */
+  qrCode         String?
+  /** التوقيع التشفيري بترميز base64 */
+  signature      String?
+  submittedAt    DateTime?
+  /** رد الهيئة كما ورد، للتشخيص والمراجعة */
+  responseStatus String?
+  responseBody   String?
+  warnings       String?
+  errors         String?
+  attempts       Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([status])
+  @@index([icv])
+}
+
+/**
+ * بيانات اعتماد جهاز الإصدار لدى الهيئة. المفتاح الخاص لا يغادر الخادم،
+ * وشهادة الإنتاج (CSID) تُصدر بعد اجتياز فحوص التوافق.
+ */
+model EInvoiceCredential {
+  id                String   @id @default(cuid())
+  /** اسم الجهاز/الوحدة كما سُجّل لدى الهيئة */
+  deviceName        String   @unique
+  environment       String   @default("sandbox")
+  privateKeyPem     String
+  publicKeyPem      String
+  csrPem            String
+  complianceCsid    String?
+  complianceSecret  String?
+  productionCsid    String?
+  productionSecret  String?
+  certificatePem    String?
+  isActive          Boolean  @default(false)
+  onboardedAt       DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
 model AuditLog {
   id         String   @id @default(cuid())
   userId     String?
@@ -588,6 +679,7 @@ model Invoice {
   payments     Payment[]
   journalEntries JournalEntry[]
   returns      ReturnNote[]
+  eInvoice     EInvoice?
 
   @@index([customerId])
   @@index([supplierId])
